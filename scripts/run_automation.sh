@@ -1,5 +1,6 @@
 #!/bin/bash
-# Scheduled ProphitBet run: refresh data -> retrain models -> predict upcoming fixtures.
+# Scheduled ProphitBet run: refresh data -> create missing leagues/models from the plan (if
+# storage/configs/automation_plan.json exists) -> retrain models -> predict upcoming fixtures.
 #
 # Usage:   scripts/run_automation.sh [extra cli.py "run" arguments]
 # Example: scripts/run_automation.sh --days 3 --tolerance 0.005
@@ -24,4 +25,7 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 cd "$PROJECT_ROOT"
+if [ -f storage/configs/automation_plan.json ]; then
+    exec "$PYTHON" cli.py run --plan --all "$@"
+fi
 exec "$PYTHON" cli.py run --all "$@"

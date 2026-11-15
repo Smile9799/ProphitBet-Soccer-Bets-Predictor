@@ -16,3 +16,6 @@ storage/logs/
 *.swp
 .idea/
 .vscode/
+
+# Personal automation plan
+storage/configs/automation_plan.json

@@ -1,13 +1,16 @@
-""" ProphitBet command line interface: refresh league data, retrain models and predict fixtures without the GUI.
+""" ProphitBet command line interface: create leagues, train models, refresh data, retrain models and predict fixtures
+    without the GUI.
 
     Examples:
         python cli.py list
-        python cli.py refresh --all
+        python cli.py plan                       # create the leagues/models of the plan that do not exist yet
+        python cli.py run --plan                 # plan -> refresh -> retrain -> predict (use this for scheduling)
+        python cli.py run --all                  # refresh -> retrain -> predict of every existing league
         python cli.py refresh --league England-Premier-League-01 --rebuild
         python cli.py retrain --all --tolerance 0.005
         python cli.py predict --all --days 7
-        python cli.py run --all                  # refresh -> retrain -> predict (use this for scheduling)
 
+    The plan defaults to storage/configs/automation_plan.json (see automation_plan.example.json).
     Do not run it while the GUI is open: both keep their own copy of the model index and would overwrite each other.
 """
 
@@ -23,6 +26,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIRECTORY = PROJECT_ROOT / 'storage' / 'logs'
 PREDICTIONS_DIRECTORY = PROJECT_ROOT / 'storage' / 'predictions'
+DEFAULT_PLAN_PATH = PROJECT_ROOT / 'storage' / 'configs' / 'automation_plan.json'
 FIXTURE_REQUEST_DELAY_SECONDS = 5.0
 
 
@@ -61,11 +65,25 @@ def _single_instance_lock():
         yield
 
 
-def _selected_leagues(pipeline, args) -> list:
+def _load_plan(pipeline, args):
+    from src.core.automation.plan import load_plan
+
+    plan_path = Path(args.plan) if args.plan else DEFAULT_PLAN_PATH
+    if not plan_path.is_file():
+        raise SystemExit(
+            f'Plan file not found: {plan_path}. Copy automation_plan.example.json to '
+            f'storage/configs/automation_plan.json and edit it.'
+        )
+    return load_plan(filepath=str(plan_path), league_database=pipeline.league_database)
+
+
+def _selected_leagues(pipeline, args, plan=None) -> list:
     league_ids = pipeline.get_league_ids()
 
-    if args.all:
+    if getattr(args, 'all', False):
         return league_ids
+    if plan is not None:
+        return [league_id for league_id in plan.league_ids if league_id in league_ids]
     if not args.league:
         raise SystemExit('Specify --league <id> (repeatable) or --all. Use "python cli.py list" to see leagues.')
 
@@ -93,26 +111,62 @@ def _command_list(pipeline, _args, _logger) -> int:
     return 0
 
 
-def _run_refresh(pipeline, league_ids, args, logger) -> bool:
+def _run_plan(pipeline, plan, logger) -> tuple:
+    """ Creates the plan's missing leagues and models. Returns (ok, {league id: created model ids}). """
+
+    from src.core.automation.plan import PlanExecutor
+
+    executor = PlanExecutor(league_database=pipeline.league_database)
     ok = True
+    created_models = {}
+    for league_spec in plan.leagues:
+        try:
+            executor.ensure_league(league_spec=league_spec)
+            created = executor.ensure_models(league_spec=league_spec)
+            created_models[league_spec.league_id] = set(created)
+            if created:
+                logger.info('[%s] Created models: %s', league_spec.league_id, ', '.join(created))
+        except Exception:
+            logger.exception('[%s] Plan step failed.', league_spec.league_id)
+            ok = False
+    return ok, created_models
+
+
+def _run_refresh(pipeline, league_ids, args, logger) -> tuple:
+    ok = True
+    rebuilt = set()
     for league_id in league_ids:
         try:
-            pipeline.refresh(league_id=league_id, rebuild=args.rebuild)
+            _df, was_rebuilt = pipeline.refresh(league_id=league_id, rebuild=args.rebuild)
+            if was_rebuilt:
+                rebuilt.add(league_id)
         except Exception:
             logger.exception('[%s] Refresh failed.', league_id)
             ok = False
-    return ok
+    return ok, rebuilt
 
 
-def _run_retrain(pipeline, league_ids, args, logger) -> bool:
+def _run_retrain(pipeline, league_ids, args, logger, forced_leagues=frozenset(), new_models=None) -> bool:
+    from src.core.database.model import ModelDatabase
+
     ok = True
     results = []
     for league_id in league_ids:
+        force = args.force or league_id in forced_leagues
+        if league_id in forced_leagues and not args.force:
+            logger.info('[%s] League statistics were recomputed: retraining all of its models.', league_id)
+
+        # Models created in this run are already trained on the latest data.
+        model_ids = args.model or ModelDatabase(league_id=league_id).get_model_ids()
+        model_ids = [model_id for model_id in model_ids if model_id not in (new_models or {}).get(league_id, set())]
+        if not model_ids:
+            continue
+
         results.extend(pipeline.retrain(
             league_id=league_id,
-            model_ids=args.model,
+            model_ids=model_ids,
             tolerance=args.tolerance,
-            force=args.force
+            force=force
         ))
 
     for result in results:
@@ -147,7 +201,7 @@ def _run_predict(pipeline, league_ids, args, logger) -> bool:
     predictions = [run.predictions for run in runs if not run.predictions.empty]
 
     if predictions:
-        summary_columns = ['League', 'Date', 'Home', 'Away', 'Market', 'Model', 'Prediction', 'Confidence', 'Passes Filters']
+        summary_columns = ['League', 'Date', 'Home', 'Away', 'Market', 'Model', 'Prediction', 'Confidence', 'EV', 'Passes Filters']
         summary_df = pd.concat(predictions, ignore_index=True)[summary_columns]
         with pd.option_context('display.max_rows', 500, 'display.width', 200, 'display.max_columns', 20):
             print(summary_df.to_string(index=False))
@@ -159,8 +213,14 @@ def _run_predict(pipeline, league_ids, args, logger) -> bool:
     return ok
 
 
+def _command_plan(pipeline, args, logger) -> int:
+    ok, _created = _run_plan(pipeline, _load_plan(pipeline, args), logger)
+    return 0 if ok else 1
+
+
 def _command_refresh(pipeline, args, logger) -> int:
-    return 0 if _run_refresh(pipeline, _selected_leagues(pipeline, args), args, logger) else 1
+    ok, _rebuilt = _run_refresh(pipeline, _selected_leagues(pipeline, args), args, logger)
+    return 0 if ok else 1
 
 
 def _command_retrain(pipeline, args, logger) -> int:
@@ -172,11 +232,31 @@ def _command_predict(pipeline, args, logger) -> int:
 
 
 def _command_run(pipeline, args, logger) -> int:
-    league_ids = _selected_leagues(pipeline, args)
-    ok = _run_refresh(pipeline, league_ids, args, logger)
+    ok = True
+    plan = None
+
+    if args.plan is not None:
+        plan = _load_plan(pipeline, args)
+        if args.days is None:
+            args.days = plan.predict_days
+        if args.tolerance is None:
+            args.tolerance = plan.retrain_tolerance
+
+    args.days = 7 if args.days is None else args.days
+    args.tolerance = 0.0 if args.tolerance is None else args.tolerance
+
+    # Existing leagues are refreshed first, so that models created by the plan train on up-to-date data.
+    refresh_ok, rebuilt = _run_refresh(pipeline, _selected_leagues(pipeline, args, plan=plan), args, logger)
+    ok = refresh_ok and ok
+
+    new_models = {}
+    if plan is not None:
+        plan_ok, new_models = _run_plan(pipeline, plan, logger)
+        ok = plan_ok and ok
+    league_ids = _selected_leagues(pipeline, args, plan=plan)
 
     if not args.skip_retrain:
-        ok = _run_retrain(pipeline, league_ids, args, logger) and ok
+        ok = _run_retrain(pipeline, league_ids, args, logger, forced_leagues=rebuilt, new_models=new_models) and ok
 
     ok = _run_predict(pipeline, league_ids, args, logger) and ok
     logger.info('Run finished %s.', 'successfully' if ok else 'with errors (see log)')
@@ -184,7 +264,7 @@ def _command_run(pipeline, args, logger) -> int:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='ProphitBet automation (refresh data, retrain models, predict fixtures).')
+    parser = argparse.ArgumentParser(description='ProphitBet automation (create leagues/models, refresh, retrain, predict).')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose logging.')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
@@ -192,25 +272,32 @@ def _build_parser() -> argparse.ArgumentParser:
         subparser.add_argument('--league', action='append', help='League id (repeatable).')
         subparser.add_argument('--all', action='store_true', help='Use all created leagues.')
 
+    def add_plan_arg(subparser, help_text):
+        subparser.add_argument('--plan', nargs='?', const='', default=None, help=help_text)
+
     def add_refresh_args(subparser):
         subparser.add_argument('--rebuild', action='store_true', help='Re-download all seasons (not only the latest).')
 
-    def add_retrain_args(subparser):
+    def add_retrain_args(subparser, default_tolerance):
         subparser.add_argument('--model', action='append', help='Model id to use (repeatable). Defaults to all.')
         subparser.add_argument(
-            '--tolerance', type=float, default=0.0,
+            '--tolerance', type=float, default=default_tolerance,
             help='Accept a retrained model whose hold-out log loss is at most this much worse. Default: 0.'
         )
         subparser.add_argument('--force', action='store_true', help='Always replace saved models with retrained ones.')
 
-    def add_predict_args(subparser, include_model: bool):
-        subparser.add_argument('--days', type=int, default=7, help='Predict fixtures of the next N days. Default: 7.')
+    def add_predict_args(subparser, include_model: bool, default_days):
+        subparser.add_argument('--days', type=int, default=default_days, help='Predict fixtures of the next N days. Default: 7.')
         subparser.add_argument('--output', default=str(PREDICTIONS_DIRECTORY), help='Output directory.')
         if include_model:
             subparser.add_argument('--model', action='append', help='Model id to use (repeatable). Defaults to all.')
 
     list_parser = subparsers.add_parser('list', help='List leagues, available markets and saved models.')
     list_parser.set_defaults(handler=_command_list)
+
+    plan_parser = subparsers.add_parser('plan', help='Create the leagues and models of the plan that do not exist yet.')
+    plan_parser.add_argument('--plan', default='', help=f'Plan file. Default: {DEFAULT_PLAN_PATH.relative_to(PROJECT_ROOT)}')
+    plan_parser.set_defaults(handler=_command_plan)
 
     refresh_parser = subparsers.add_parser('refresh', help='Download the latest matches.')
     add_league_args(refresh_parser)
@@ -219,19 +306,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
     retrain_parser = subparsers.add_parser('retrain', help='Retrain saved models on the latest data.')
     add_league_args(retrain_parser)
-    add_retrain_args(retrain_parser)
+    add_retrain_args(retrain_parser, default_tolerance=0.0)
     retrain_parser.set_defaults(handler=_command_retrain)
 
     predict_parser = subparsers.add_parser('predict', help='Predict upcoming fixtures with saved models.')
     add_league_args(predict_parser)
-    add_predict_args(predict_parser, include_model=True)
+    add_predict_args(predict_parser, include_model=True, default_days=7)
     predict_parser.set_defaults(handler=_command_predict)
 
-    run_parser = subparsers.add_parser('run', help='Refresh, retrain and predict (for scheduled runs).')
+    run_parser = subparsers.add_parser('run', help='(Plan ->) refresh -> retrain -> predict (for scheduled runs).')
     add_league_args(run_parser)
+    add_plan_arg(run_parser, 'Run the plan first and process its leagues (optionally a plan file path).')
     add_refresh_args(run_parser)
-    add_retrain_args(run_parser)
-    add_predict_args(run_parser, include_model=False)
+    add_retrain_args(run_parser, default_tolerance=None)
+    add_predict_args(run_parser, include_model=False, default_days=None)
     run_parser.add_argument('--skip-retrain', action='store_true', help='Only refresh data and predict.')
     run_parser.set_defaults(handler=_command_run)
     return parser

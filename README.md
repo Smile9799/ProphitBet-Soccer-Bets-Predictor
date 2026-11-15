@@ -527,23 +527,46 @@ Half-time markets require half-time scores, which football-data.co.uk provides f
 Leagues created before these markets existed are re-downloaded automatically on their next update.
 Outcome columns are never used as model inputs, so existing models keep working unchanged.
 
+## Current-Form Inputs & Form Statistics (fork)
+Upcoming matches are predicted from both teams' **current form**: the match is appended after the league's played
+matches and its statistics are computed by the same engine used for training (so inputs are built exactly like the
+training rows). The original app copied the statistics of the teams' last meeting at the same venue, which could be
+a season old and was unavailable for teams that had not met. That method is now only a fallback early in the season,
+when teams have not played enough matches yet.
+
+New goal-based statistics can be selected when creating a league: clean sheets (`HCS`, `ACS`, `HCST`, `ACST`),
+failed to score (`HFTS`, `AFTS`, `HFTST`, `AFTST`), BTTS (`HBTTS`, `ABTTS`) and over 2.5 (`HO25`, `AO25`).
+The `HAGFT` (always 0) and `HAGAT` (used goals forward) statistics were fixed; leagues computed before the fix are
+rebuilt automatically, and their models are retrained.
+
 ## Automation (fork)
-`cli.py` runs the data refresh, model retraining and fixture predictions without the GUI:
+`cli.py` creates leagues, trains models, refreshes data, retrains models and predicts fixtures without the GUI:
 
 ```bash
 python cli.py list                         # leagues, available markets and saved models
+python cli.py plan                         # create the plan's missing leagues & models (see below)
+python cli.py run --plan                   # refresh -> plan -> retrain -> predict (for scheduled runs)
+python cli.py run --all                    # refresh -> retrain -> predict of every existing league
 python cli.py refresh --all                # download the latest matches (--rebuild re-downloads all seasons)
 python cli.py retrain --all                # retrain saved models on the latest matches
 python cli.py predict --all --days 7       # predict the next 7 days of fixtures with every saved model
-python cli.py run --all                    # refresh -> retrain -> predict (for scheduled runs)
 ```
+
+* **Plan**: copy `automation_plan.example.json` to `storage/configs/automation_plan.json` and list the leagues and
+  models (classifier + markets, optional hyperparameter tuning trials) you want. Every run creates whatever is missing,
+  so adding a league or market to the plan is enough to have it built on the next scheduled run.
+* **Fixtures** come from FootyStats; when it fails (it rate-limits with 403) or lacks odds, football-data.co.uk's
+  fixture files are used (main and extra leagues; they cover the next few days and include Over/Under 2.5 odds).
 
 * **Retraining** reuses each model's saved hyperparameters and hold-out size. A retrained model replaces the saved one
   only if its log loss on the most recent hold-out matches is not worse than the saved model's on the same matches
   (`--tolerance` allows a small increase, `--force` always replaces). Models are skipped when no new matches were played.
   The replaced model is backed up to `storage/leagues/<league>/model_backups/<model>/`.
 * **Predictions** are written to `storage/predictions/<date>/` (a CSV per league and a `predictions.xlsx` workbook with a
-  `Skipped` sheet listing matches that could not be predicted and why). Matches passing a model's saved evaluation
+  `Skipped` sheet listing matches that could not be predicted and why). `EV` is the expected profit per unit stake of
+  betting on the prediction (Result and U/O 2.5 markets, when odds are known). The `Value Bets` sheet lists positive-EV
+  bets **only from models that beat the bookmaker** on their hold-out matches (`Skill vs Bookmaker` > 0): EV from a
+  model that is worse than the bookmaker is noise. Matches passing a model's saved evaluation
   filters are flagged in the `Passes Filters` column. `Fixture Home`/`Fixture Away` show the original FootyStats names
   to verify the automatic team-name matching.
 * **Logs** are written to `storage/logs/automation.log`.

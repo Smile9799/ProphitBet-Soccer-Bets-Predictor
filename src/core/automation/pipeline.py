@@ -10,7 +10,7 @@ import pickle
 import shutil
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -19,6 +19,7 @@ from src.core.database.league import LeagueDatabase
 from src.core.database.model import ModelDatabase
 from src.core.preprocessing.filters import filter_matches
 from src.core.preprocessing.utils.inputs import (
+    construct_inputs_by_form,
     construct_inputs_by_match,
     latest_season_and_week,
     prepare_prediction_row,
@@ -28,6 +29,13 @@ from src.core.preprocessing.utils.selection import train_test_split
 from src.core.preprocessing.utils.targets import TargetType
 
 logger = logging.getLogger('prophitbet.automation')
+
+# Odds columns of the predicted label, per market (used to compute the expected value of a bet).
+MARKET_ODDS = {
+    TargetType.RESULT: {'H': '1', 'D': 'X', 'A': '2'},
+    TargetType.RESULT_UNDER_OVER: {'O': 'Over 2.5', 'U': 'Under 2.5'},
+}
+FIXTURE_COLUMNS = ['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Fixture Home', 'Fixture Away', 'Source']
 
 
 @dataclass(frozen=True)
@@ -75,6 +83,14 @@ def _eval_log_loss(report: pd.DataFrame) -> float:
     return float(report['Log Loss'].iloc[0])
 
 
+def _valid_odd(value: Any) -> Optional[float]:
+    try:
+        odd = float(value)
+    except (TypeError, ValueError):
+        return None
+    return odd if math.isfinite(odd) and odd > 1.0 else None
+
+
 class AutomationPipeline:
     """ Runs the refresh -> retrain -> predict steps of one or more leagues without the GUI.
 
@@ -85,6 +101,11 @@ class AutomationPipeline:
 
     def __init__(self, league_database: Optional[LeagueDatabase] = None):
         self._league_database = league_database or LeagueDatabase()
+        self._football_data_fixtures = None
+
+        # After repeated FootyStats failures (it rate-limits with 403), it is skipped for the rest of the run.
+        self._footystats_failures = 0
+        self._max_footystats_failures = 2
 
     @property
     def league_database(self) -> LeagueDatabase:
@@ -97,9 +118,9 @@ class AutomationPipeline:
     # Refresh
     # ------------------------------------------------------------------------------------------------------------
 
-    def refresh(self, league_id: str, rebuild: bool = False) -> pd.DataFrame:
-        """ Downloads the latest matches of a league. Leagues stored before new markets were introduced are
-            rebuilt automatically.
+    def refresh(self, league_id: str, rebuild: bool = False) -> Tuple[pd.DataFrame, bool]:
+        """ Downloads the latest matches of a league. Returns the league data and whether it was rebuilt.
+            Leagues stored before new markets / statistics fixes were introduced are rebuilt automatically.
 
             Args
             ----
@@ -107,13 +128,14 @@ class AutomationPipeline:
             :param rebuild: (bool) whether to re-download all seasons instead of only the latest one.
         """
 
-        previous_rows = self._league_database.load_league(league_id=league_id).shape[0]
+        history_df = self._league_database.load_league(league_id=league_id)
+        previous_rows = history_df.shape[0]
 
         if not rebuild and self._league_database._requires_rebuild(
                 league_config=self._league_database.index[league_id],
-                history_df=self._league_database.load_league(league_id=league_id)
+                history_df=history_df
         ):
-            logger.info('[%s] League was created before the new markets were added: rebuilding it.', league_id)
+            logger.info('[%s] League data predates new markets/statistics fixes: rebuilding it.', league_id)
             rebuild = True
 
         if rebuild:
@@ -128,7 +150,7 @@ class AutomationPipeline:
             '[%s] Matches: %d -> %d. Last match: %s. Markets: %s',
             league_id, previous_rows, df.shape[0], df['Date'].max(), markets
         )
-        return df
+        return df, rebuild
 
     # ------------------------------------------------------------------------------------------------------------
     # Retrain
@@ -162,7 +184,8 @@ class AutomationPipeline:
             :param league_id: (str) league identifier.
             :param model_ids: (List[str] | None) models to retrain. Defaults to all models of the league.
             :param tolerance: (float) allowed log loss increase for the retrained model to still be accepted.
-            :param force: (bool) whether to always replace the saved model.
+            :param force: (bool) whether to always retrain and replace the saved models (e.g. after the league's
+                          statistics were recomputed, which makes the saved models' inputs outdated).
             :param seed: (int) random seed.
         """
 
@@ -262,96 +285,175 @@ class AutomationPipeline:
         return results
 
     # ------------------------------------------------------------------------------------------------------------
-    # Predict
+    # Fixtures
     # ------------------------------------------------------------------------------------------------------------
 
-    def _upcoming_fixtures(
-            self,
-            fixture_url: str,
-            today: date,
-            days: int
-    ) -> List[Tuple[str, pd.DataFrame]]:
-        """ Scrapes the fixtures of the next N days. Returns a list of (match date, fixture dataframe). """
+    def _footystats_fixtures(self, league, today: date, last_day: date) -> pd.DataFrame:
+        """ Scrapes the league's fixtures from FootyStats (team names are not yet matched to the league's names). """
 
         from src.core.network.fixtures.dates import add_years_to_dates
         from src.core.network.fixtures.footystats import FootyStatsScraper
 
         scraper = FootyStatsScraper()
-        tree = scraper.scrape(fixture_url=fixture_url)
-        date_labels = scraper.get_available_table_dates(tree=tree)
+        tree = scraper.scrape(fixture_url=league.fixture_url)
+        date_labels = scraper.get_available_table_dates(tree=tree) or []
 
-        if not date_labels:
-            return []
-
-        last_day = today + timedelta(days=days)
-        fixtures = []
+        frames = []
         for table_index, label in enumerate(add_years_to_dates(date_items=date_labels, current_date=today)):
             match_date = pd.to_datetime(label, errors='coerce')
-
             if pd.isna(match_date) or not (today <= match_date.date() <= last_day):
                 continue
 
             fixture_df = scraper.parse_league_table(tree=tree, table_index=table_index)
             if fixture_df is not None and not fixture_df.empty:
-                fixtures.append((match_date.strftime('%Y-%m-%d'), fixture_df))
-        return fixtures
+                frames.append(fixture_df[['Home', 'Away', '1', 'X', '2']].assign(Date=match_date.strftime('%Y-%m-%d')))
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=['Date', 'Home', 'Away', '1', 'X', '2'])
 
-    @staticmethod
-    def _valid_odd(value: Any) -> Optional[float]:
-        try:
-            odd = float(value)
-        except (TypeError, ValueError):
-            return None
-        return odd if math.isfinite(odd) and odd > 1.0 else None
+    def _football_data_fixtures_df(self, league, today: date, last_day: date) -> pd.DataFrame:
+        from src.core.network.fixtures.footballdata import FootballDataFixtures
 
-    def _build_prediction_inputs(
-            self,
-            source_df: pd.DataFrame,
-            fixtures: List[Tuple[str, pd.DataFrame]]
-    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """ Builds model inputs for the scraped fixtures. Returns (inputs, match info, skipped matches). """
+        if self._football_data_fixtures is None:
+            self._football_data_fixtures = FootballDataFixtures()
+
+        df = self._football_data_fixtures.get_fixtures(league=league)
+        dates = pd.to_datetime(df['Date'], errors='coerce').dt.date
+        return df[(dates >= today) & (dates <= last_day)].reset_index(drop=True)
+
+    def get_fixtures(self, league_id: str, days: int = 7, today: Optional[date] = None) -> pd.DataFrame:
+        """ Returns the league's upcoming fixtures of the next N days, with team names matched to the league's names.
+            FootyStats is used first; football-data.co.uk is used as fallback when FootyStats fails or has no fixtures,
+            and to fill missing odds (and add Over/Under 2.5 odds) of FootyStats matches.
+        """
 
         from src.core.preprocessing.utils.fixtures import match_fixture_teams
 
+        today = today or date.today()
+        last_day = today + timedelta(days=days)
+        league = self._league_database.index[league_id].league
+        league_df = self._league_database.load_league(league_id=league_id)
+
+        footystats_df = pd.DataFrame(columns=['Date', 'Home', 'Away', '1', 'X', '2'])
+        if self._footystats_failures < self._max_footystats_failures:
+            try:
+                footystats_df = self._footystats_fixtures(league=league, today=today, last_day=last_day)
+                self._footystats_failures = 0
+            except Exception as error:
+                self._footystats_failures += 1
+                logger.warning('[%s] FootyStats fixtures failed (%s).', league_id, error)
+                if self._footystats_failures == self._max_footystats_failures:
+                    logger.warning('FootyStats failed repeatedly: using football-data.co.uk only for the rest of the run.')
+
+        try:
+            football_data_df = self._football_data_fixtures_df(league=league, today=today, last_day=last_day)
+        except Exception as error:
+            logger.warning('[%s] football-data.co.uk fixtures failed (%s).', league_id, error)
+            football_data_df = pd.DataFrame(columns=['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5'])
+
+        # FootyStats team names are fuzzy-matched to the league's names (football-data.co.uk already uses them).
+        footystats_df = footystats_df.dropna(subset=['Home', 'Away'])
+        footystats_df = footystats_df[footystats_df['Home'].astype(str).str.strip() != ''].reset_index(drop=True)
+        if not footystats_df.empty:
+            footystats_df['Fixture Home'] = footystats_df['Home']
+            footystats_df['Fixture Away'] = footystats_df['Away']
+            footystats_df = match_fixture_teams(league_df=league_df, fixture_df=footystats_df.copy())
+            footystats_df['Source'] = 'FootyStats'
+            for odd in ['1', 'X', '2']:
+                footystats_df[odd] = footystats_df[odd].map(_valid_odd)
+
+        if not football_data_df.empty:
+            football_data_df = football_data_df.assign(
+                **{'Fixture Home': football_data_df['Home'], 'Fixture Away': football_data_df['Away'], 'Source': 'football-data'}
+            )
+
+        if footystats_df.empty:
+            fixtures_df = football_data_df
+        elif football_data_df.empty:
+            fixtures_df = footystats_df.assign(**{'Over 2.5': np.nan, 'Under 2.5': np.nan})
+        else:
+            # Filling missing FootyStats odds and adding U/O odds from football-data.co.uk (matched by teams).
+            odds_df = football_data_df.drop_duplicates(subset=['Home', 'Away']).set_index(['Home', 'Away'])
+            keys = pd.MultiIndex.from_frame(footystats_df[['Home', 'Away']])
+            for odd in ['1', 'X', '2', 'Over 2.5', 'Under 2.5']:
+                fallback = odds_df[odd].reindex(keys).to_numpy()
+                current = footystats_df[odd].to_numpy(dtype=float) if odd in footystats_df else np.full(len(keys), np.nan)
+                footystats_df[odd] = np.where(np.isnan(current), fallback, current)
+            has_fallback = keys.isin(odds_df.index)
+            footystats_df.loc[has_fallback, 'Source'] = 'FootyStats + football-data odds'
+
+            # Matches published by football-data.co.uk only.
+            known = set(zip(footystats_df['Home'], footystats_df['Away']))
+            extra_df = football_data_df[[pair not in known for pair in zip(football_data_df['Home'], football_data_df['Away'])]]
+            fixtures_df = pd.concat([footystats_df, extra_df], ignore_index=True)
+
+        if fixtures_df.empty:
+            return pd.DataFrame(columns=FIXTURE_COLUMNS)
+        return fixtures_df[FIXTURE_COLUMNS].sort_values(by='Date', kind='stable').reset_index(drop=True)
+
+    # ------------------------------------------------------------------------------------------------------------
+    # Predict
+    # ------------------------------------------------------------------------------------------------------------
+
+    def _build_prediction_inputs(
+            self,
+            league_id: str,
+            fixtures_df: pd.DataFrame
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """ Builds model inputs for the fixtures. Returns (inputs, match info, skipped matches).
+            Inputs are computed from the teams' current form; matches whose teams have not played enough matches in
+            the current season fall back to the original method (the teams' last meeting at the same venue).
+        """
+
+        league_config = self._league_database.index[league_id]
+        source_df = self._league_database.load_league(league_id=league_id)
         league_df = source_df.dropna(ignore_index=True)
         season, week = latest_season_and_week(league_df=source_df)
 
-        input_rows, match_rows, skipped_rows = [], [], []
-        for match_date, fixture_df in fixtures:
-            fixture_df = fixture_df.dropna(subset=['Home', 'Away']).reset_index(drop=True)
-            fixture_df = fixture_df[(fixture_df['Home'].astype(str).str.strip() != '')]
-            original_names = fixture_df[['Home', 'Away']].copy()
-            fixture_df = match_fixture_teams(league_df=source_df, fixture_df=fixture_df.copy())
+        skipped_rows = []
+        valid_ids = []
+        for index, fixture in fixtures_df.iterrows():
+            info = fixture[['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict()
+            if fixture['Home'] == fixture['Away']:
+                skipped_rows.append({**info, 'Reason': 'Team names matched to the same team.'})
+            elif any(_valid_odd(fixture[odd]) is None for odd in ('1', 'X', '2')):
+                skipped_rows.append({**info, 'Reason': 'Odds are not available yet.'})
+            else:
+                valid_ids.append(index)
 
-            for index, fixture in fixture_df.iterrows():
-                home, away = fixture['Home'], fixture['Away']
-                fixture_home, fixture_away = original_names.loc[index, 'Home'], original_names.loc[index, 'Away']
-                info = {
-                    'Date': match_date, 'Home': home, 'Away': away,
-                    'Fixture Home': fixture_home, 'Fixture Away': fixture_away
-                }
-                odds = [self._valid_odd(fixture[odd]) for odd in ('1', 'X', '2')]
+        matches_df = fixtures_df.loc[valid_ids].reset_index(drop=True)
+        form_df = construct_inputs_by_form(league_df=source_df, matches_df=matches_df, league_config=league_config) \
+            if not matches_df.empty else pd.DataFrame(columns=source_df.columns)
+        feature_columns = [column for column in league_config.stats_columns if column in form_df.columns]
 
-                if home == away:
-                    skipped_rows.append({**info, 'Reason': 'Team names matched to the same team.'})
-                    continue
-                if any(odd is None for odd in odds):
-                    skipped_rows.append({**info, 'Reason': 'Odds are not available yet.'})
-                    continue
+        input_rows, match_rows = [], []
+        for index, match in matches_df.iterrows():
+            form_row = form_df.loc[index]
+            if not form_row[feature_columns].isna().any():
+                input_rows.append(form_row)
+                match_rows.append({**match.to_dict(), 'Inputs': 'Current form'})
+                continue
 
-                match = pd.Series([home, away, *odds], index=['Home', 'Away', '1', 'X', '2'])
-                row = construct_inputs_by_match(league_df=league_df, match_df=match)
-                if row is None:
-                    skipped_rows.append({**info, 'Reason': 'No previous home match between these teams.'})
-                    continue
+            last_meeting = construct_inputs_by_match(
+                league_df=league_df,
+                match_df=pd.Series([match['Home'], match['Away'], match['1'], match['X'], match['2']], index=['Home', 'Away', '1', 'X', '2'])
+            )
+            if last_meeting is None:
+                skipped_rows.append({
+                    **match[['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict(),
+                    'Reason': 'Not enough matches this season, and no previous home meeting between these teams.'
+                })
+                continue
 
-                input_rows.append(prepare_prediction_row(row=row, match_date=match_date, season=season, week=week))
-                match_rows.append({**info, '1': odds[0], 'X': odds[1], '2': odds[2]})
+            input_rows.append(prepare_prediction_row(row=last_meeting, match_date=match['Date'], season=season, week=week))
+            match_rows.append({**match.to_dict(), 'Inputs': 'Last meeting (early season)'})
 
         inputs_df = pd.DataFrame(input_rows).reset_index(drop=True)
-        matches_df = pd.DataFrame(match_rows)
-        skipped_df = pd.DataFrame(skipped_rows, columns=['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Reason'])
-        return inputs_df, matches_df, skipped_df
+        if not inputs_df.empty:
+            inputs_df = inputs_df.astype(league_df.dtypes.to_dict())
+        info_df = pd.DataFrame(match_rows)
+        skipped_df = pd.DataFrame(
+            skipped_rows, columns=['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source', 'Reason']
+        )
+        return inputs_df, info_df, skipped_df
 
     def predict(
             self,
@@ -371,15 +473,13 @@ class AutomationPipeline:
         """
 
         today = today or date.today()
-        league_config = self._league_database.index[league_id]
-        source_df = self._league_database.load_league(league_id=league_id)
-
         logger.info('[%s] Fetching fixtures for %s .. %s', league_id, today, today + timedelta(days=days))
-        fixtures = self._upcoming_fixtures(fixture_url=league_config.league.fixture_url, today=today, days=days)
-        inputs_df, matches_df, skipped_df = self._build_prediction_inputs(source_df=source_df, fixtures=fixtures)
+        fixtures_df = self.get_fixtures(league_id=league_id, days=days, today=today)
+        inputs_df, matches_df, skipped_df = self._build_prediction_inputs(league_id=league_id, fixtures_df=fixtures_df)
+        sources = ', '.join(f'{source}: {count}' for source, count in fixtures_df['Source'].value_counts().items()) or 'none'
         logger.info(
-            '[%s] Fixtures: %d matches to predict, %d skipped.',
-            league_id, inputs_df.shape[0], skipped_df.shape[0]
+            '[%s] Fixtures: %d matches to predict, %d skipped (sources: %s).',
+            league_id, inputs_df.shape[0], skipped_df.shape[0], sources
         )
 
         model_database = ModelDatabase(league_id=league_id)
@@ -407,8 +507,11 @@ class AutomationPipeline:
                 f'Prob-{label}' for target in TargetType for label in target.get_mapper()
                 if f'Prob-{label}' in predictions_df.columns
             ))
-            leading_columns = ['League', 'Date', 'Home', 'Away', '1', 'X', '2', 'Market', 'Model', 'Prediction', 'Confidence']
-            trailing_columns = ['Passes Filters', 'Fixture Home', 'Fixture Away']
+            leading_columns = [
+                'League', 'Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
+                'Market', 'Model', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss', 'Skill vs Bookmaker'
+            ]
+            trailing_columns = ['Passes Filters', 'Inputs', 'Source', 'Fixture Home', 'Fixture Away']
             predictions_df = predictions_df[[*leading_columns, *probability_columns, *trailing_columns]]
         if not skipped_df.empty:
             skipped_df.insert(0, 'League', league_id)
@@ -422,18 +525,45 @@ class AutomationPipeline:
             inputs_df: pd.DataFrame,
             matches_df: pd.DataFrame
     ) -> pd.DataFrame:
-        """ Generates the predictions of one model, and flags matches passing the model's saved evaluation filters. """
+        """ Generates the predictions of one model, the expected value of betting on the prediction (when the market's
+            odds are known), and flags matches passing the model's saved evaluation filters.
+        """
 
         target_type: TargetType = model_config.classifier_config['target_type']
         labels = np.asarray(list(target_type.get_mapper().keys()))
         probabilities = np.asarray(model.predict_proba(df=inputs_df), dtype=float)
         prediction_ids = np.argmax(probabilities, axis=1)
+        predictions = labels[prediction_ids]
+        confidence = probabilities.max(axis=1)
 
-        result_df = matches_df[['Date', 'Home', 'Away', '1', 'X', '2']].copy()
+        result_df = matches_df[['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']].copy()
         result_df['Market'] = target_type.value
         result_df['Model'] = model_id
-        result_df['Prediction'] = labels[prediction_ids]
-        result_df['Confidence'] = probabilities.max(axis=1).round(3)
+        result_df['Prediction'] = predictions
+        result_df['Confidence'] = confidence.round(3)
+
+        # Expected value (profit per unit stake) = probability * odd - 1, for markets with known odds.
+        odds_columns = MARKET_ODDS.get(target_type)
+        if odds_columns:
+            odds = np.array([
+                pd.to_numeric(matches_df.iloc[i][odds_columns[label]], errors='coerce')
+                for i, label in enumerate(predictions)
+            ], dtype=float)
+        else:
+            odds = np.full(predictions.shape[0], np.nan)
+        result_df['Odd'] = odds
+        result_df['EV'] = (confidence*odds - 1.0).round(3)
+
+        # Hold-out quality of the model. "Skill vs Bookmaker" > 0 means its probabilities beat the bookmaker's on the
+        # latest matches (available for the Result market). EV is only meaningful for such models.
+        report = model_config.train_report
+        eval_report = report[report['Data'] == 'Eval'] if 'Data' in report.columns else report
+        result_df['Holdout Log Loss'] = float(eval_report['Log Loss'].iloc[0]) if not eval_report.empty else np.nan
+        result_df['Skill vs Bookmaker'] = (
+            float(eval_report['Log Loss Skill'].iloc[0])
+            if 'Log Loss Skill' in eval_report.columns and not eval_report.empty else np.nan
+        )
+
         for label, values in zip(labels, probabilities.T):
             result_df[f'Prob-{label}'] = values.round(3)
 
@@ -452,14 +582,16 @@ class AutomationPipeline:
         else:
             result_df['Passes Filters'] = ''
 
-        # Original FootyStats names, to verify the fuzzy team-name matching.
-        result_df['Fixture Home'] = matches_df['Fixture Home']
-        result_df['Fixture Away'] = matches_df['Fixture Away']
+        for column in ['Inputs', 'Source', 'Fixture Home', 'Fixture Away']:
+            result_df[column] = matches_df[column]
         return result_df
 
 
 def export_predictions(runs: List[PredictionRun], output_directory: str, run_date: Optional[datetime] = None) -> List[str]:
-    """ Exports predictions to CSV files (one per league) and a single Excel workbook. Returns the written paths. """
+    """ Exports predictions to CSV files (one per league) and a single Excel workbook with the sheets: Predictions,
+        Value Bets (positive expected value from models that beat the bookmaker on their hold-out matches), Skipped.
+        Returns the written paths.
+    """
 
     run_date = run_date or datetime.now()
     directory = os.path.join(output_directory, run_date.strftime('%Y-%m-%d'))
@@ -479,7 +611,11 @@ def export_predictions(runs: List[PredictionRun], output_directory: str, run_dat
         workbook_filepath = os.path.join(directory, 'predictions.xlsx')
         with pd.ExcelWriter(workbook_filepath, engine='openpyxl') as writer:
             if all_predictions:
-                pd.concat(all_predictions, ignore_index=True).to_excel(writer, sheet_name='Predictions', index=False)
+                predictions_df = pd.concat(all_predictions, ignore_index=True)
+                predictions_df.to_excel(writer, sheet_name='Predictions', index=False)
+                value_mask = (predictions_df['EV'] > 0) & (predictions_df['Skill vs Bookmaker'] > 0)
+                value_df = predictions_df[value_mask].sort_values(by='EV', ascending=False)
+                value_df.to_excel(writer, sheet_name='Value Bets', index=False)
             if all_skipped:
                 pd.concat(all_skipped, ignore_index=True).to_excel(writer, sheet_name='Skipped', index=False)
         written.append(workbook_filepath)
