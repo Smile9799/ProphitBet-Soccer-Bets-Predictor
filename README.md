@@ -580,6 +580,18 @@ To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at
 `scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).
 **Do not run the automation while the GUI is open**, since both keep and save their own copy of the model index.
 
+## One-Shot Setup (fork, Linux Mint / Ubuntu)
+`scripts/setup.sh` sets up ProphitBet on a fresh machine (or safely re-runs on an existing one): installs git,
+Graphviz and Python 3.11 when missing, clones/updates this repository, creates `~/prophitbet-venv` with the
+requirements, installs MEGAcmd and logs in to MEGA (asks for your e-mail and password), restores the latest MEGA
+backup, creates a ProphitBet launcher (application menu + desktop icon) and installs the Tuesday/Friday 17:30
+automation schedule.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Smile9799/ProphitBet-Soccer-Bets-Predictor/main/scripts/setup.sh -o setup.sh
+bash setup.sh                        # bash setup.sh --help for options (--dir, --venv, --yes, --no-cron, ...)
+```
+
 ## Backups to MEGA (fork)
 League data, trained models, tuning studies and predictions are not stored in git. `scripts/backup_to_mega.sh` archives
 `storage/leagues`, `storage/predictions` and `storage/configs` and uploads the archive to `MEGA:/ProphitBet-Backups`
