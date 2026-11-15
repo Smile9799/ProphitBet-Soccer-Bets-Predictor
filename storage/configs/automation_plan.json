@@ -1,0 +1,35 @@
+{
+  "_comment": "Personal automation plan (not committed). See automation_plan.example.json for all options. Add a league here and the next scheduled run creates it and trains its models.",
+  "predict_days": 4,
+  "retrain_tolerance": 0.0,
+  "league_defaults": {
+    "start_year": 2015,
+    "stats_columns": "all"
+  },
+  "model_defaults": {
+    "test_size": 400,
+    "normalizer": "Standard",
+    "calibrate_probabilities": true,
+    "tune_metric": "Log Loss"
+  },
+  "leagues": [
+    {
+      "country": "England",
+      "name": "Premier-League",
+      "league_id": "England-Premier-League-01",
+      "models": [
+        {"classifier": "LogisticRegressor", "targets": "all"},
+        {"classifier": "LightGBM", "targets": "all", "tune_trials": 20}
+      ]
+    },
+    {
+      "country": "England",
+      "name": "Championship",
+      "league_id": "England-Championship-01",
+      "models": [
+        {"classifier": "LogisticRegressor", "targets": "all", "test_size": 550},
+        {"classifier": "LightGBM", "targets": "all", "tune_trials": 20, "test_size": 550}
+      ]
+    }
+  ]
+}

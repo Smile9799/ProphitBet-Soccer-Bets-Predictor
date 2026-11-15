@@ -2,8 +2,8 @@
 # Navigate to the directory of the script
 cd "$(dirname "$0")"
 
-# (Optional) Activate your virtual environment first:
-# source "$HOME/python/envs/myenv/bin/activate"
+# Activate the ProphitBet virtual environment (Python 3.11)
+source "$HOME/prophitbet-venv/bin/activate"
 
-# Run main.py and keep terminal open
-python3 main.py
+# Run main.py
+python main.py
