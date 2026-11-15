@@ -84,6 +84,70 @@ def prepare_prediction_row(row: pd.Series, match_date: str, season: object, week
     return row
 
 
+def construct_inputs_by_form(league_df: pd.DataFrame, matches_df: pd.DataFrame, league_config) -> pd.DataFrame:
+    """ Constructs model inputs of upcoming matches from both teams' current form: each match is appended after the
+        league's played matches and its statistics are computed by the same engine (and settings) used for the
+        league's data. Since statistics only use previous matches, inputs are identical to how training rows were
+        built. Matches of the same date are computed together; matches of later dates never see unplayed results.
+
+        Returns a dataframe with the league's columns, aligned with matches_df's index. Rows have missing statistics
+        when a team has not played enough matches in the current season (match history window).
+
+        Args
+        ----
+        :param league_df: (pd.DataFrame) league's dataframe (including rows with missing values).
+        :param matches_df: (pd.DataFrame) upcoming matches with columns Date (YYYY-MM-DD), Home, Away, 1, X, 2.
+        :param league_config: (LeagueConfig) league's config (statistics settings).
+    """
+
+    from src.core.preprocessing.statistics import StatisticsEngine
+    from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
+
+    stats_columns = [column for column in league_config.stats_columns if column in league_df.columns]
+    raw_columns = [column for column in league_df.columns if column not in stats_columns]
+    season, week = latest_season_and_week(league_df=league_df)
+
+    # Statistics are computed per season, so only the current season's played matches are required.
+    history_df = league_df.loc[league_df['Season'] == season, raw_columns].iloc[::-1]
+    history_df = history_df.sort_values(by='Date', ascending=True, kind='stable')
+
+    outcome_placeholders = {'HG': 0, 'AG': 0, **{column: 0 for column in HALF_TIME_COLUMNS}}
+    outcome_placeholders.update({target.value: next(iter(target.get_mapper())) for target in TargetType})
+
+    rows = []
+    for match_date, date_matches in matches_df.groupby('Date', sort=True):
+        upcoming_df = pd.DataFrame(index=range(date_matches.shape[0]), columns=raw_columns, dtype=object)
+        upcoming_df['Date'] = match_date
+        upcoming_df['Season'] = season
+        upcoming_df['Week'] = week
+        for column in ['Home', 'Away', '1', 'X', '2']:
+            upcoming_df[column] = date_matches[column].to_numpy()
+        upcoming_df['1X'] = [double_chance_odd(a, b) for a, b in zip(upcoming_df['1'], upcoming_df['X'])]
+        upcoming_df['12'] = [double_chance_odd(a, b) for a, b in zip(upcoming_df['1'], upcoming_df['2'])]
+        upcoming_df['X2'] = [double_chance_odd(a, b) for a, b in zip(upcoming_df['X'], upcoming_df['2'])]
+        for column, value in outcome_placeholders.items():
+            if column in upcoming_df.columns:
+                upcoming_df[column] = value
+
+        combined_df = pd.concat(
+            [history_df[history_df['Date'] < match_date], upcoming_df], axis=0, ignore_index=True
+        ).astype(history_df.dtypes.to_dict())
+
+        stats_df = StatisticsEngine(
+            match_history_window=league_config.match_history_window,
+            goal_diff_margin=league_config.goal_diff_margin,
+            aggregation=league_config.aggregation
+        ).compute_stats(df=combined_df, stats_columns=stats_columns)
+
+        date_rows = stats_df.iloc[-date_matches.shape[0]:]
+        date_rows.index = date_matches.index
+        rows.append(date_rows)
+
+    if not rows:
+        return pd.DataFrame(columns=league_df.columns)
+    return pd.concat(rows, axis=0).loc[matches_df.index, league_df.columns]
+
+
 def construct_inputs_from_fixture(df: pd.DataFrame, fixture_df: pd.DataFrame) -> Optional[pd.DataFrame]:
     """ Constructs a model input using a fixture (multiple matches) that include home, away, 1, X, 2 odds.
         Missing values should be omitted before calling this method.

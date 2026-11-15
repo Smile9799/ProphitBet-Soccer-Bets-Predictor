@@ -226,6 +226,7 @@ class PredictionsWorkspace(WorkspacePage):
                 model_database=model_database,
                 agent_database=agent_database,
                 parent=main_window,
+                league_config=league_config,
             )
         else:
             from src.gui.components.dialogs.predictions.manual import ManualPredictionDialog
@@ -235,6 +236,7 @@ class PredictionsWorkspace(WorkspacePage):
                 model_database=model_database,
                 agent_database=agent_database,
                 parent=main_window,
+                league_config=league_config,
             )
         dialog.exec()
         dialog.deleteLater()

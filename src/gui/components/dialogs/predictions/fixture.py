@@ -26,6 +26,7 @@ from src.core.network.fixtures.footystats import FootyStatsScraper
 from src.core.preprocessing.filters import filter_matches
 from src.core.preprocessing.utils.fixtures import match_fixture_teams
 from src.core.network.fixtures.dates import add_years_to_dates
+from src.core.network.fixtures.footballdata import FootballDataFixtureScraper
 from src.core.preprocessing.utils.inputs import construct_inputs_by_match, double_chance_odd, prepare_prediction_row
 from src.core.preprocessing.utils.targets import TargetType
 from src.gui.components.dialogs.predictions.manual import ManualPredictionDialog
@@ -34,6 +35,7 @@ from src.gui.widgets import CheckableComboBox, ExcelTable
 if TYPE_CHECKING:
     from src.core.database.agent import AgentDatabase
     from src.core.database.model import ModelDatabase
+    from src.core.leagues.league import LeagueConfig
 
 
 class FixturePredictionDialog(ManualPredictionDialog):
@@ -52,10 +54,15 @@ class FixturePredictionDialog(ManualPredictionDialog):
             agent_database: AgentDatabase,
             parent: Optional[QWidget] = None,
             scraper: Optional[FootyStatsScraper] = None,
+            league_config: Optional['LeagueConfig'] = None,
     ):
         self._fixture_url = fixture_url
         # Single attempt: retries with backoff would block the GUI thread.
         self._scraper = scraper or FootyStatsScraper(max_attempts=1)
+        # football-data.co.uk fixtures are used when FootyStats fails (requires the league config).
+        self._fallback_scraper = (
+            None if league_config is None else FootballDataFixtureScraper(league=league_config.league)
+        )
         self._fixture_tree = None
         self._prediction_row_ids: list[int] = []
         self._prediction_filter_df: Optional[pd.DataFrame] = None
@@ -68,6 +75,7 @@ class FixturePredictionDialog(ManualPredictionDialog):
             model_database=model_database,
             agent_database=agent_database,
             parent=parent,
+            league_config=league_config,
         )
 
         self.setWindowTitle('Fixture Predictions')
@@ -257,10 +265,27 @@ class FixturePredictionDialog(ManualPredictionDialog):
             self._date_combo.setCurrentIndex(-1)
 
         try:
-            self._fixture_tree = self._scraper.scrape(fixture_url=self._fixture_url)
-            dates = self._scraper.get_available_table_dates(tree=self._fixture_tree)
+            try:
+                self._fixture_tree = self._scraper.scrape(fixture_url=self._fixture_url)
+                dates = self._scraper.get_available_table_dates(tree=self._fixture_tree)
+                footystats_error = None if dates else 'no fixture dates were found'
+            except Exception as error:
+                dates, footystats_error = None, str(error)
+
+            fallback_message = None
+            if footystats_error is not None and self._fallback_scraper is not None:
+                self._scraper = self._fallback_scraper
+                self._fixture_tree = self._scraper.scrape(fixture_url=self._fixture_url)
+                dates = self._scraper.get_available_table_dates(tree=self._fixture_tree)
+                fallback_message = (
+                    f'FootyStats is unavailable ({footystats_error}); '
+                    'showing football-data.co.uk fixtures (next few days only).'
+                )
+            elif footystats_error is not None and dates is None:
+                raise RuntimeError(footystats_error)
+
             if not dates:
-                self._set_error('download', 'No fixture dates were found on FootyStats.')
+                self._set_error('download', 'No fixture dates were found on FootyStats or football-data.co.uk.')
                 self._date_combo.setEnabled(False)
                 return
 
@@ -269,7 +294,7 @@ class FixturePredictionDialog(ManualPredictionDialog):
                 self._date_combo.addItems([str(date) for date in dates])
                 self._date_combo.setCurrentIndex(-1)
             self._date_combo.setEnabled(True)
-            self._set_error('download', None)
+            self._set_error('download', fallback_message)
         except Exception as error:
             self._fixture_tree = None
             self._date_combo.setEnabled(False)
@@ -422,9 +447,9 @@ class FixturePredictionDialog(ManualPredictionDialog):
                 )
                 construction_failed = False
                 try:
-                    prediction_row = construct_inputs_by_match(
-                        league_df=self._league_df,
-                        match_df=match,
+                    prediction_row = self._build_match_input(
+                        match=match,
+                        match_date=self._selected_fixture_date,
                     )
                 except Exception as error:
                     construction_failed = True
@@ -432,17 +457,11 @@ class FixturePredictionDialog(ManualPredictionDialog):
                     errors.append(f'Row {row_number}: could not construct model inputs: {error}')
                 if prediction_row is None and not construction_failed:
                     errors.append(
-                        f'Row {row_number}: no historical match was found for {home} vs {away}.'
+                        f'Row {row_number}: not enough matches this season, and no historical match '
+                        f'was found for {home} vs {away}.'
                     )
 
             if prediction_row is not None:
-                prediction_row = prepare_prediction_row(
-                    row=prediction_row,
-                    match_date=self._selected_fixture_date,
-                    season=latest_season,
-                    week=next_week,
-                )
-
                 values.update({column: prediction_row[column] for column in self._BASE_COLUMNS})
                 values.update({column: prediction_row[column] for column in self._feature_columns})
                 prediction_rows.append(prediction_row)

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from src.core.agents.environments.actions import Action
 from src.core.preprocessing.utils.inputs import (
+    construct_inputs_by_form,
     construct_inputs_by_match,
     latest_season_and_week,
     prepare_prediction_row,
@@ -32,6 +33,7 @@ from src.gui.widgets import ExcelTable
 if TYPE_CHECKING:
     from src.core.database.agent import AgentDatabase
     from src.core.database.model import ModelDatabase
+    from src.core.leagues.league import LeagueConfig
 
 
 class ManualPredictionDialog(QDialog):
@@ -55,9 +57,12 @@ class ManualPredictionDialog(QDialog):
             model_database: ModelDatabase,
             agent_database: AgentDatabase,
             parent: Optional[QWidget] = None,
+            league_config: Optional['LeagueConfig'] = None,
     ):
         super().__init__(parent)
 
+        # With the league config, match inputs are computed from the teams' current form.
+        self._league_config = league_config
         self._source_df = df
         self._league_df = df.dropna(ignore_index=True)
         self._model_database = model_database
@@ -326,6 +331,34 @@ class ManualPredictionDialog(QDialog):
     def _latest_season_and_week(self) -> tuple[object, int]:
         return latest_season_and_week(self._source_df)
 
+    def _build_match_input(self, match: pd.Series, match_date: str) -> Optional[pd.Series]:
+        """Build the complete model input row of an upcoming match.
+
+        Uses the teams' current form when the league config is known and both
+        teams have played enough matches this season. Otherwise, it falls back
+        to the original method: the teams' last meeting at the same venue.
+        Models and agents share the historical dataframe preprocessing contract,
+        which requires the metadata columns; neutral outcome values are kept
+        only in the private prediction input and are never shown.
+        """
+
+        if self._league_config is not None:
+            matches_df = match.to_frame().T.assign(Date=match_date).reset_index(drop=True)
+            form_row = construct_inputs_by_form(
+                league_df=self._source_df,
+                matches_df=matches_df,
+                league_config=self._league_config,
+            ).iloc[0]
+            if not form_row[self._feature_columns].isna().any():
+                return form_row
+
+        row = construct_inputs_by_match(league_df=self._league_df, match_df=match)
+        if row is None:
+            return None
+
+        latest_season, next_week = self._latest_season_and_week()
+        return prepare_prediction_row(row=row, match_date=match_date, season=latest_season, week=next_week)
+
     def _fetch_match(self) -> None:
         self._prediction_df = None
         self._match_df = None
@@ -342,22 +375,18 @@ class ManualPredictionDialog(QDialog):
         )
 
         try:
-            row = construct_inputs_by_match(league_df=self._league_df, match_df=match)
+            row = self._build_match_input(
+                match=match,
+                match_date=datetime.now().strftime('%Y-%m-%d'),
+            )
             if row is None:
-                self._set_error('input', 'No historical match was found for the selected Home/Away pairing.')
+                self._set_error(
+                    'input',
+                    'Not enough matches this season, and no historical match was found for the selected '
+                    'Home/Away pairing.',
+                )
                 return
 
-            latest_season, next_week = self._latest_season_and_week()
-
-            # Models and agents share the historical dataframe preprocessing
-            # contract, which requires the metadata columns. Neutral outcome values
-            # are kept only in the private prediction input and are never shown.
-            row = prepare_prediction_row(
-                row=row,
-                match_date=datetime.now().strftime('%Y-%m-%d'),
-                season=latest_season,
-                week=next_week,
-            )
             self._prediction_df = row.to_frame().T.reset_index(drop=True)
 
             display_row = row.drop(
