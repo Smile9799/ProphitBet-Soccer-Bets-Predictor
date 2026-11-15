@@ -166,6 +166,11 @@ class LeagueDatabase:
         league_config = self._index[league_id]
         history_df = self.load_league(league_id=league_id)
 
+        # Leagues stored before new columns (e.g. markets) were introduced are rebuilt from scratch. Otherwise,
+        # the old seasons would contain missing values for the new columns and would be dropped from training.
+        if self._requires_rebuild(league_config=league_config, history_df=history_df):
+            return self.rebuild_league(league_id=league_id)
+
         # Updating league's data.
         season = history_df.iloc[0]['Season']
         update_config = replace(league_config, start_year=season)
@@ -186,6 +191,44 @@ class LeagueDatabase:
             return history_df
 
         df = pd.concat((update_df, history_df[history_df['Season'] < season]), axis=0, ignore_index=True)
+        self.save_league(df=df, league_config=league_config)
+        return df
+
+    def _requires_rebuild(self, league_config: LeagueConfig, history_df: pd.DataFrame) -> bool:
+        """ Whether the stored league lacks columns that a fresh download would provide (e.g. new markets). """
+
+        from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
+
+        # Full-time markets are available for every league; half-time ones only if the source provides them,
+        # so only the former are checked (avoids re-downloading leagues without half-time data on every update).
+        expected_columns = {
+            target.value for target in TargetType if not set(target.required_columns) & set(HALF_TIME_COLUMNS)
+        }
+        return not expected_columns.issubset(history_df.columns)
+
+    def rebuild_league(self, league_id: str) -> pd.DataFrame:
+        """ Re-downloads all seasons of an existing league (from its start year) and replaces its stored data.
+            Useful to obtain columns (markets) that were introduced after the league was created.
+
+            Args
+            ----
+            :param league_id: (str) specified league's identifier.
+        """
+
+        from src.core.preprocessing.filters import filter_league_odds
+
+        league_config = self._index[league_id]
+        df = self.download_league(league_config=league_config)
+        filtered_df = filter_league_odds(
+            df=df,
+            odd_1_mask_range=league_config.odd_1_mask_range,
+            odd_x_mask_range=league_config.odd_x_mask_range,
+            odd_2_mask_range=league_config.odd_2_mask_range,
+            validate_dataframe=False
+        )
+        if filtered_df is not None:
+            df = filtered_df
+
         self.save_league(df=df, league_config=league_config)
         return df
 

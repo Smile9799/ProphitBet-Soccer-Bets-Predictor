@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
 from src.core.leagues.league import LeagueConfig
+from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType, compute_target_columns
 
 
 class LeagueDownloader(ABC):
@@ -28,6 +29,10 @@ class LeagueDownloader(ABC):
         ]
         self._time_format = '%Y-%m-%d'
 
+        # Half-time scores are kept only if (nearly) all matches provide them. Matches missing them are dropped,
+        # otherwise the columns are discarded and half-time markets are unavailable for the league.
+        self._max_missing_half_time_ratio = 0.02
+
     @abstractmethod
     def _download_dataframe(self, league_config: LeagueConfig) -> pd.DataFrame:
         """ Downloads and returns league's dataframe based on the selected parameters.
@@ -52,7 +57,8 @@ class LeagueDownloader(ABC):
                 7. Fills missing odds based on match history.
                 8. Computes double chance odds: 1X, 12, X2.
                 9. Computes match week.
-                10. Filters league's relevant columns.
+                10. Computes the labels of the additional markets.
+                11. Filters league's relevant columns.
             Args
             ----
             :param df: (pd.DataFrame) Downloaded league's data.
@@ -62,6 +68,15 @@ class LeagueDownloader(ABC):
         # 1. Dropping matches with missing Dates or Results.
         df = df.dropna(subset=['Date', 'Result'])
 
+        # 1b. Keeping half-time scores (if provided) to support half-time markets.
+        has_half_time = False
+        if set(HALF_TIME_COLUMNS).issubset(df.columns):
+            df[HALF_TIME_COLUMNS] = df[HALF_TIME_COLUMNS].apply(pd.to_numeric, errors='coerce')
+            missing_half_time = df[HALF_TIME_COLUMNS].isna().any(axis=1)
+
+            if df.shape[0] > 0 and missing_half_time.mean() <= self._max_missing_half_time_ratio:
+                df = df[~missing_half_time]
+                has_half_time = True
 
         # 2. Removing non-ASCII characters.
         def remove_non_ascii(x: str) -> str:
@@ -108,7 +123,18 @@ class LeagueDownloader(ABC):
         week_per_team = long_df.groupby(['Season', 'Team'], sort=False).cumcount().add(1).to_numpy()
         week_values = week_per_team.reshape(df.shape[0], 2).max(axis=1)
 
-        # 10. Filtering relevant columns & re-ordering of columns.
+        # 10. Computing the labels of the additional markets (BTTS, U/O lines, team totals, half-time markets).
+        market_df = compute_target_columns(df=df).drop(
+            columns=[TargetType.RESULT.value, TargetType.RESULT_UNDER_OVER.value],
+            errors='ignore'
+        )
+        if not has_half_time:
+            market_df = market_df.drop(
+                columns=[target.value for target in TargetType if 'HTHG' in target.required_columns],
+                errors='ignore'
+            )
+
+        # 11. Filtering relevant columns & re-ordering of columns.
         computed_df = pd.DataFrame({
             'Result-U/O': results_under_over,
             '1X': odds_1x.clip(lower=1.0),
@@ -116,8 +142,17 @@ class LeagueDownloader(ABC):
             'X2': odds_x2.clip(lower=1.0),
             'Week': week_values
         })
-        df = pd.concat([df, computed_df], axis=1)
-        df = df[self._relevant_columns]
+        df = pd.concat([df, computed_df, market_df], axis=1)
+
+        relevant_columns = list(self._relevant_columns)
+        if has_half_time:
+            ag_index = relevant_columns.index('AG')
+            relevant_columns[ag_index + 1: ag_index + 1] = HALF_TIME_COLUMNS
+            df[HALF_TIME_COLUMNS] = df[HALF_TIME_COLUMNS].astype(int)
+        uo_index = relevant_columns.index('Result-U/O')
+        relevant_columns[uo_index + 1: uo_index + 1] = market_df.columns.tolist()
+
+        df = df[relevant_columns]
         return df
 
     def download(self, league_config: LeagueConfig) -> pd.DataFrame:

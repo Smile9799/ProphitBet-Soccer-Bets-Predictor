@@ -52,8 +52,9 @@ class ExploratoryDataAnalyzer:
 
         # Preprocessing dataframe: Splitting into Input dataframe and Metadata.
         dataset_preprocessor = DatasetPreprocessor()
-        eda_df = df.drop(columns=dataset_preprocessor.metadata_columns)
-        metadata = df[dataset_preprocessor.metadata_columns]
+        metadata_columns = dataset_preprocessor.get_metadata_columns(df=df)
+        eda_df = df.drop(columns=metadata_columns)
+        metadata = df[metadata_columns]
 
         # Generating the EDA report.
         eda_report = {}
