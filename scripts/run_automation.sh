@@ -12,7 +12,8 @@
 #   30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
 #
 # Output: storage/predictions/<date>/  ·  Log: storage/logs/automation.log
-# Do not run while the GUI is open (both write the model index).
+# The GUI must not be open during a run (both write the model index): the run waits for it to be
+# closed (up to GUI_WAIT_MINUTES, default 60) and is skipped otherwise.
 
 set -euo pipefail
 
@@ -25,6 +26,32 @@ if [ ! -x "$PYTHON" ]; then
 fi
 
 cd "$PROJECT_ROOT"
+mkdir -p storage/logs
+
+gui_is_open() {
+    local pid
+    for pid in $(pgrep -f 'python[0-9.]* .*main\.py$|python[0-9.]* main\.py' 2>/dev/null); do
+        case "$(basename "$(readlink -f "/proc/$pid/exe" 2>/dev/null)")" in
+            python*) ;;
+            *) continue ;;
+        esac
+        if [ "$(readlink -f "/proc/$pid/cwd" 2>/dev/null)" = "$PROJECT_ROOT" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+waited=0
+while gui_is_open; do
+    if [ "$waited" -ge "${GUI_WAIT_MINUTES:-60}" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') WARNING Run skipped: the ProphitBet GUI is still open." >> storage/logs/automation.log
+        exit 3
+    fi
+    sleep 300
+    waited=$((waited + 5))
+done
+
 if [ -f storage/configs/automation_plan.json ]; then
     exec "$PYTHON" cli.py run --plan --all "$@"
 fi

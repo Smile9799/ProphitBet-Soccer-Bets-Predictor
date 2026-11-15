@@ -255,8 +255,11 @@ def _command_run(pipeline, args, logger) -> int:
         ok = plan_ok and ok
     league_ids = _selected_leagues(pipeline, args, plan=plan)
 
-    if not args.skip_retrain:
-        ok = _run_retrain(pipeline, league_ids, args, logger, forced_leagues=rebuilt, new_models=new_models) and ok
+    # Leagues whose statistics were recomputed (rebuilt) are always retrained, even with --skip-retrain:
+    # their saved models would otherwise predict from outdated inputs.
+    retrain_ids = league_ids if not args.skip_retrain else [league_id for league_id in league_ids if league_id in rebuilt]
+    if retrain_ids:
+        ok = _run_retrain(pipeline, retrain_ids, args, logger, forced_leagues=rebuilt, new_models=new_models) and ok
 
     ok = _run_predict(pipeline, league_ids, args, logger) and ok
     logger.info('Run finished %s.', 'successfully' if ok else 'with errors (see log)')
