@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Tuple
 from lxml import html
 from tqdm import tqdm
@@ -66,10 +66,15 @@ class BetExplorerLeagueDownloader(LeagueDownloader):
 
         date_str = date_element[0].text_content().rstrip()
 
-        if date_str == 'Today':
-            return date.today().strftime('%d/%m/%Y')
+        # The latest results are labelled relative to today.
+        relative_days = {'Today': 0, 'Yesterday': 1}
+        if date_str in relative_days:
+            return (date.today() - timedelta(days=relative_days[date_str])).strftime('%d/%m/%Y')
 
-        day, month, year = date_str.split('.')
+        parts = date_str.split('.')
+        if len(parts) != 3:
+            return None  # Unknown label: the match is skipped instead of failing the whole league.
+        day, month, year = parts
 
         if len(year) < 4:
             year = season
