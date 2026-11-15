@@ -110,6 +110,9 @@ const num = (value, digits = 3) => value == null ? '–' : Number(value).toFixed
 const signed = (value, digits = 2) => value == null ? '–' : `<span class="${value > 0 ? 'pos' : value < 0 ? 'neg' : ''}">${value > 0 ? '+' : ''}${Number(value).toFixed(digits)}</span>`;
 const leagueName = (id) => { const l = state.leagues.find((x) => x.league_id === id); return l ? `${l.country} · ${l.name.replace(/-/g, ' ')}` : id; };
 const marketLabel = (m) => m === 'Result-U/O' ? 'U/O 2.5' : m;
+// Kickoff in SAST (time unknown for FootyStats-only fixtures).
+const kickoff = (p) => `${esc(p.match_date)} <span class="${p.kickoff_time ? '' : 'muted'}">${esc(p.kickoff_time || '–')}</span>`;
+const kickoffSort = (p) => `${p.match_date} ${p.kickoff_time || '99:99'}`;
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -175,7 +178,7 @@ function renderPredictions() {
   if (!state.sort.predictions) state.sort.predictions = { key: 'match_date', dir: 1 };
 
   const columns = [
-    { key: 'match_date', label: 'Date' },
+    { key: 'match_date', label: 'Kickoff (SAST)', sortValue: kickoffSort, render: kickoff },
     { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
     { key: 'home', label: 'Match', render: (p) => `<span class="match">${esc(p.home)}</span> <span class="muted">vs</span> <span class="match">${esc(p.away)}</span>` },
     { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
@@ -197,7 +200,7 @@ function renderPredictions() {
     const matches = {};
     rows.filter((p) => p.preferred).forEach((p) => {
       const key = `${p.match_date}|${p.league_id}|${p.home}|${p.away}`;
-      (matches[key] ||= { match_date: p.match_date, league_id: p.league_id, home: p.home, away: p.away, odd_1: p.odd_1, odd_x: p.odd_x, odd_2: p.odd_2, picks: {} }).picks[p.market] = p;
+      (matches[key] ||= { match_date: p.match_date, kickoff_time: p.kickoff_time, league_id: p.league_id, home: p.home, away: p.away, odd_1: p.odd_1, odd_x: p.odd_x, odd_2: p.odd_2, picks: {} }).picks[p.market] = p;
     });
     const matchRows = Object.values(matches);
     const markets = MARKET_ORDER.filter((m) => matchRows.some((r) => r.picks[m]));
@@ -209,7 +212,7 @@ function renderPredictions() {
       return `<span class="${cls}" title="${esc(p.model_id)} · ${Object.entries(p.probabilities).map(([k, v]) => `${k} ${pct(v, 0)}`).join(' · ')}"><span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span></span>${value}`;
     };
     content = table('matches', [
-      { key: 'match_date', label: 'Date' },
+      { key: 'match_date', label: 'Kickoff (SAST)', sortValue: kickoffSort, render: kickoff },
       { key: 'league_id', label: 'League', render: (r) => esc(leagueName(r.league_id)) },
       { key: 'home', label: 'Match', render: (r) => `<span class="match">${esc(r.home)}</span> <span class="muted">vs</span> <span class="match">${esc(r.away)}</span>` },
       { key: 'odd_1', label: '1 · X · 2', render: (r) => r.odd_1 ? `<span class="muted">${num(r.odd_1, 2)} · ${num(r.odd_x, 2)} · ${num(r.odd_2, 2)}</span>` : '–' },
@@ -295,7 +298,7 @@ function renderRecord() {
     ], groupRows, 'No stored predictions yet.')}
     <h2>Recently settled</h2>
     ${table('recent', [
-      { key: 'match_date', label: 'Date' },
+      { key: 'match_date', label: 'Kickoff (SAST)', sortValue: kickoffSort, render: kickoff },
       { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
       { key: 'home', label: 'Match', render: (p) => `${esc(p.home)} <span class="muted">vs</span> ${esc(p.away)}` },
       { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },

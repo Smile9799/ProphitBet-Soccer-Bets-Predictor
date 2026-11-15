@@ -8,9 +8,15 @@
 import io
 import re
 from typing import Dict, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+
+# football-data.co.uk publishes kickoff times in UK time; they are converted to SAST.
+SOURCE_TIMEZONE = ZoneInfo('Europe/London')
+DISPLAY_TIMEZONE = ZoneInfo('Africa/Johannesburg')
+DISPLAY_TIMEZONE_NAME = 'SAST'
 
 MAIN_FIXTURES_URL = 'https://www.football-data.co.uk/fixtures.csv'
 EXTRA_FIXTURES_URL = 'https://www.football-data.co.uk/new_league_fixtures.csv'
@@ -57,15 +63,16 @@ class FootballDataFixtures:
         return result
 
     def get_fixtures(self, league) -> pd.DataFrame:
-        """ Returns the league's upcoming fixtures with columns: Date (YYYY-MM-DD), Home, Away, 1, X, 2,
-            Over 2.5, Under 2.5 (missing odds are NaN). Returns an empty dataframe if the league is not covered.
+        """ Returns the league's upcoming fixtures with columns: Date (YYYY-MM-DD), Time (HH:MM), Home, Away, 1, X, 2,
+            Over 2.5, Under 2.5 (missing odds are NaN). Date and Time are the kickoff in SAST (a missing kickoff time
+            keeps the published date). Returns an empty dataframe if the league is not covered.
 
             Args
             ----
             :param league: (League) league entity (from leagues.json).
         """
 
-        columns = ['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']
+        columns = ['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']
 
         if league.category == 'main':
             df = self._download(MAIN_FIXTURES_URL)
@@ -79,8 +86,15 @@ class FootballDataFixtures:
         if df.empty:
             return pd.DataFrame(columns=columns)
 
+        dates = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+        times = df['Time'].astype(str).str.strip() if 'Time' in df.columns else pd.Series('', index=df.index)
+        kickoffs = pd.to_datetime(
+            dates.dt.strftime('%Y-%m-%d') + ' ' + times, format='%Y-%m-%d %H:%M', errors='coerce'
+        ).dt.tz_localize(SOURCE_TIMEZONE, ambiguous='NaT', nonexistent='NaT').dt.tz_convert(DISPLAY_TIMEZONE)
+
         fixtures_df = pd.DataFrame({
-            'Date': pd.to_datetime(df['Date'], dayfirst=True, errors='coerce').dt.strftime('%Y-%m-%d'),
+            'Date': kickoffs.dt.strftime('%Y-%m-%d').where(kickoffs.notna(), dates.dt.strftime('%Y-%m-%d')),
+            'Time': kickoffs.dt.strftime('%H:%M'),
             'Home': df['Home'].astype(str).str.strip(),
             'Away': df['Away'].astype(str).str.strip(),
             **{odd: self._first_available(df, preference) for odd, preference in _ODDS_PREFERENCE.items()}
@@ -127,6 +141,7 @@ class FootballDataFixtureScraper:
             return None
 
         df = tree[tree['Date'] == dates[table_index]][['Home', 'Away', '1', 'X', '2']].reset_index(drop=True)
+        # (Kickoff times are not part of FootyStats' table format used by the GUI.)
         df[['1', 'X', '2']] = df[['1', 'X', '2']].fillna(1.0)  # FootyStats' "missing odd" sentinel.
 
         def double_chance(first: pd.Series, second: pd.Series) -> pd.Series:

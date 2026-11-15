@@ -35,7 +35,10 @@ MARKET_ODDS = {
     TargetType.RESULT: {'H': '1', 'D': 'X', 'A': '2'},
     TargetType.RESULT_UNDER_OVER: {'O': 'Over 2.5', 'U': 'Under 2.5'},
 }
-FIXTURE_COLUMNS = ['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Fixture Home', 'Fixture Away', 'Source']
+# Date & Time are the kickoff in SAST (Time is only known for football-data.co.uk fixtures).
+FIXTURE_COLUMNS = [
+    'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Fixture Home', 'Fixture Away', 'Source'
+]
 
 
 @dataclass(frozen=True)
@@ -378,7 +381,7 @@ class AutomationPipeline:
             football_data_df = self._football_data_fixtures_df(league=league, today=today, last_day=last_day)
         except Exception as error:
             logger.warning('[%s] football-data.co.uk fixtures failed (%s).', league_id, error)
-            football_data_df = pd.DataFrame(columns=['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5'])
+            football_data_df = pd.DataFrame(columns=['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5'])
 
         # FootyStats team names are fuzzy-matched to the league's names (football-data.co.uk already uses them).
         footystats_df = footystats_df.dropna(subset=['Home', 'Away'])
@@ -399,7 +402,7 @@ class AutomationPipeline:
         if footystats_df.empty:
             fixtures_df = football_data_df
         elif football_data_df.empty:
-            fixtures_df = footystats_df.assign(**{'Over 2.5': np.nan, 'Under 2.5': np.nan})
+            fixtures_df = footystats_df.assign(**{'Time': np.nan, 'Over 2.5': np.nan, 'Under 2.5': np.nan})
         else:
             # Filling missing FootyStats odds and adding U/O odds from football-data.co.uk (matched by teams).
             odds_df = football_data_df.drop_duplicates(subset=['Home', 'Away']).set_index(['Home', 'Away'])
@@ -408,6 +411,8 @@ class AutomationPipeline:
                 fallback = odds_df[odd].reindex(keys).to_numpy()
                 current = footystats_df[odd].to_numpy(dtype=float) if odd in footystats_df else np.full(len(keys), np.nan)
                 footystats_df[odd] = np.where(np.isnan(current), fallback, current)
+            # Kickoff times (SAST) are only published by football-data.co.uk.
+            footystats_df['Time'] = odds_df['Time'].reindex(keys).to_numpy()
             has_fallback = keys.isin(odds_df.index)
             footystats_df.loc[has_fallback, 'Source'] = 'FootyStats + football-data odds'
 
@@ -418,7 +423,7 @@ class AutomationPipeline:
 
         if fixtures_df.empty:
             return pd.DataFrame(columns=FIXTURE_COLUMNS)
-        return fixtures_df[FIXTURE_COLUMNS].sort_values(by='Date', kind='stable').reset_index(drop=True)
+        return fixtures_df[FIXTURE_COLUMNS].sort_values(by=['Date', 'Time'], kind='stable', na_position='last').reset_index(drop=True)
 
     # ------------------------------------------------------------------------------------------------------------
     # Predict
@@ -442,7 +447,7 @@ class AutomationPipeline:
         skipped_rows = []
         valid_ids = []
         for index, fixture in fixtures_df.iterrows():
-            info = fixture[['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict()
+            info = fixture[['Date', 'Time', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict()
             if fixture['Home'] == fixture['Away']:
                 skipped_rows.append({**info, 'Reason': 'Team names matched to the same team.'})
             elif any(_valid_odd(fixture[odd]) is None for odd in ('1', 'X', '2')):
@@ -469,7 +474,7 @@ class AutomationPipeline:
             )
             if last_meeting is None:
                 skipped_rows.append({
-                    **match[['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict(),
+                    **match[['Date', 'Time', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source']].to_dict(),
                     'Reason': 'Not enough matches this season, and no previous home meeting between these teams.'
                 })
                 continue
@@ -482,7 +487,7 @@ class AutomationPipeline:
             inputs_df = inputs_df.astype(league_df.dtypes.to_dict())
         info_df = pd.DataFrame(match_rows)
         skipped_df = pd.DataFrame(
-            skipped_rows, columns=['Date', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source', 'Reason']
+            skipped_rows, columns=['Date', 'Time', 'Home', 'Away', 'Fixture Home', 'Fixture Away', 'Source', 'Reason']
         )
         return inputs_df, info_df, skipped_df
 
@@ -544,7 +549,7 @@ class AutomationPipeline:
                 if f'Prob-{label}' in predictions_df.columns
             ))
             leading_columns = [
-                'League', 'Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
+                'League', 'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
                 'Market', 'Model', 'Preferred', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss',
                 'Skill vs Bookmaker'
             ]
@@ -573,7 +578,7 @@ class AutomationPipeline:
         predictions = labels[prediction_ids]
         confidence = probabilities.max(axis=1)
 
-        result_df = matches_df[['Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']].copy()
+        result_df = matches_df[['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']].copy()
         result_df['Market'] = target_type.value
         result_df['Model'] = model_id
         result_df['Prediction'] = predictions

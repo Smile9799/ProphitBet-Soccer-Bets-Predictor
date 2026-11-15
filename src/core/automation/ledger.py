@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     league_id TEXT NOT NULL,
     match_date TEXT NOT NULL,
+    kickoff_time TEXT,
     home TEXT NOT NULL,
     away TEXT NOT NULL,
     market TEXT NOT NULL,
@@ -80,6 +81,10 @@ class PredictionLedger:
 
         with closing(self._connect()) as connection, connection:
             connection.executescript(_SCHEMA)
+            # Upgrading ledgers created before kickoff times (SAST) were stored.
+            columns = {row['name'] for row in connection.execute('PRAGMA table_info(predictions)')}
+            if 'kickoff_time' not in columns:
+                connection.execute('ALTER TABLE predictions ADD COLUMN kickoff_time TEXT')
 
         # Importing predictions exported before the ledger existed.
         if is_new:
@@ -110,8 +115,10 @@ class PredictionLedger:
             probabilities = {
                 column[len('Prob-'):]: _float(row[column]) for column in probability_columns if _float(row[column]) is not None
             }
+            kickoff_time = row.get('Time')
             rows.append((
-                row['League'], str(row['Date']), row['Home'], row['Away'], row['Market'], row['Model'],
+                row['League'], str(row['Date']), None if pd.isna(kickoff_time) else str(kickoff_time),
+                row['Home'], row['Away'], row['Market'], row['Model'],
                 str(row['Prediction']), _float(row.get('Confidence')), json.dumps(probabilities),
                 _float(row.get('1')), _float(row.get('X')), _float(row.get('2')),
                 _float(row.get('Over 2.5')), _float(row.get('Under 2.5')),
@@ -125,12 +132,12 @@ class PredictionLedger:
         with closing(self._connect()) as connection, connection:
             connection.executemany("""
                 INSERT INTO predictions (
-                    league_id, match_date, home, away, market, model_id, prediction, confidence, probabilities,
-                    odd_1, odd_x, odd_2, odd_over25, odd_under25, odd, ev, holdout_log_loss, skill_vs_bookmaker,
-                    inputs, source, predicted_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    league_id, match_date, kickoff_time, home, away, market, model_id, prediction, confidence,
+                    probabilities, odd_1, odd_x, odd_2, odd_over25, odd_under25, odd, ev, holdout_log_loss,
+                    skill_vs_bookmaker, inputs, source, predicted_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (league_id, match_date, home, away, model_id) DO UPDATE SET
-                    market = excluded.market, prediction = excluded.prediction, confidence = excluded.confidence,
+                    kickoff_time = COALESCE(excluded.kickoff_time, predictions.kickoff_time), market = excluded.market, prediction = excluded.prediction, confidence = excluded.confidence,
                     probabilities = excluded.probabilities, odd_1 = excluded.odd_1, odd_x = excluded.odd_x,
                     odd_2 = excluded.odd_2, odd_over25 = excluded.odd_over25, odd_under25 = excluded.odd_under25,
                     odd = excluded.odd, ev = excluded.ev, holdout_log_loss = excluded.holdout_log_loss,
@@ -224,7 +231,7 @@ class PredictionLedger:
         if since:
             query += ' AND match_date >= ?'
             params.append(since)
-        query += ' ORDER BY match_date, league_id, home, market, model_id'
+        query += ' ORDER BY match_date, kickoff_time, league_id, home, market, model_id'
 
         with closing(self._connect()) as connection:
             return pd.read_sql_query(query, connection, params=params)

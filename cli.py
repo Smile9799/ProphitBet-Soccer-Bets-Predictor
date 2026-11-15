@@ -212,7 +212,7 @@ def _run_predict(pipeline, league_ids, args, logger) -> bool:
     predictions = [run.predictions for run in runs if not run.predictions.empty]
 
     if predictions:
-        summary_columns = ['League', 'Date', 'Home', 'Away', 'Market', 'Model', 'Prediction', 'Confidence', 'EV', 'Passes Filters']
+        summary_columns = ['League', 'Date', 'Time', 'Home', 'Away', 'Market', 'Model', 'Prediction', 'Confidence', 'EV', 'Passes Filters']
         summary_df = pd.concat(predictions, ignore_index=True)[summary_columns]
         with pd.option_context('display.max_rows', 500, 'display.width', 200, 'display.max_columns', 20):
             print(summary_df.to_string(index=False))
