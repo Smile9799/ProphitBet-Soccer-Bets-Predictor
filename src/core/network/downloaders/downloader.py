@@ -133,7 +133,7 @@ class LeagueDownloader(ABC):
 
         # Validating dataframe: checking for empty rows and missing columns.
         if df is None or df.shape[0] == 0:
-            raise
+            raise ValueError(f'Download failed: no matches were found for league "{league_config.league}".')
         if not set(self._expected_columns).issubset(df.columns):
             raise KeyError(
                 f'Download failed: expected dataframe columns: "{self._expected_columns}", '

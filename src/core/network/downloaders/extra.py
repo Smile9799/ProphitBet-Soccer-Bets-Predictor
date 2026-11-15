@@ -51,7 +51,7 @@ class ExtraLeagueDownloader(LeagueDownloader):
 
             row_id = data_df['AvgCH'] == 'x'
             data_df.loc[row_id, 'AvgCH'] = data_df.loc[row_id, 'PSCH'].astype(str).values
-            data_df['AvgCH'] = df['AvgCH'].astype(float)
+            data_df['AvgCH'] = data_df['AvgCH'].astype(float)
             return data_df
 
         league = league_config.league
