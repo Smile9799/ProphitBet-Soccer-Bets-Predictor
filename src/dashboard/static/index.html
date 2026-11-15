@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ProphitBet Dashboard</title>
+<link rel="icon" href="/favicon.png">
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dfe3e8; --text: #1c2430; --muted: #66707d;
+    --accent: #1f6feb; --accent-soft: #e5efff; --good: #1a7f37; --good-soft: #dcf5e3; --bad: #c62828; --bad-soft: #fde4e4;
+    --warn: #9a6700; --warn-soft: #fff4d6; --star: #d4a017; --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1419; --panel: #171d24; --panel-2: #1e252e; --border: #2b343f; --text: #e6edf3; --muted: #8b96a3;
+      --accent: #4c8dff; --accent-soft: #1c2a40; --good: #3fb950; --good-soft: #15291c; --bad: #f85149; --bad-soft: #3a1a1a;
+      --warn: #d29922; --warn-soft: #33270f; --star: #e3b341; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Ubuntu, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  header img { width: 34px; height: 34px; }
+  header h1 { font-size: 18px; margin: 0; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .55; cursor: default; }
+  nav { display: flex; gap: 4px; padding: 0 24px; background: var(--panel); border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 11px 14px; background: none; color: var(--muted); white-space: nowrap; }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { padding: 20px 24px 40px; max-width: 1500px; margin: 0 auto; }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: end; margin-bottom: 14px; }
+  .filters label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .filters label.check { flex-direction: row; align-items: center; gap: 6px; color: var(--text); font-size: 13px; padding-bottom: 7px; }
+  select, input[type=search] { font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); min-width: 150px; }
+  input[type=range] { width: 150px; }
+  .note { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; max-width: 900px; }
+  .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; box-shadow: var(--shadow); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel-2); font-size: 12px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th .arrow { opacity: .6; }
+  tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: var(--panel-2); }
+  .match { font-weight: 600; }
+  .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.won { background: var(--good-soft); color: var(--good); }
+  .badge.lost { background: var(--bad-soft); color: var(--bad); }
+  .badge.upcoming { background: var(--accent-soft); color: var(--accent); }
+  .badge.awaiting { background: var(--warn-soft); color: var(--warn); }
+  .star { color: var(--star); }
+  .pick { font-weight: 700; }
+  .bar { display: inline-block; width: 70px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
+  .bar span { display: block; height: 100%; background: var(--accent); }
+  .pos { color: var(--good); font-weight: 600; }
+  .neg { color: var(--bad); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; box-shadow: var(--shadow); }
+  .card .label { color: var(--muted); font-size: 12px; }
+  .card .value { font-size: 22px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  h2 { font-size: 15px; margin: 22px 0 10px; }
+  .empty { padding: 36px; text-align: center; color: var(--muted); }
+  .count { color: var(--muted); font-size: 12.5px; margin: 8px 2px; }
+  #job { display: none; margin: 0 24px; margin-top: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  #job summary { padding: 10px 14px; cursor: pointer; }
+  #job pre { margin: 0; padding: 10px 14px; max-height: 260px; overflow: auto; font-size: 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
+  .error { color: var(--bad); padding: 14px; }
+  @media (max-width: 700px) { header, nav, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <img src="/favicon.png" alt="">
+  <div>
+    <h1>ProphitBet</h1>
+    <div class="sub" id="subtitle">All leagues</div>
+  </div>
+  <div class="spacer"></div>
+  <button id="btn-refresh" title="Download the latest results of every league and settle stored predictions">Refresh results</button>
+  <button id="btn-predict" class="primary" title="Predict the upcoming fixtures of every league with every model">Predict upcoming</button>
+</header>
+<details id="job"><summary id="job-summary"></summary><pre id="job-output"></pre></details>
+<nav id="tabs">
+  <button data-tab="predictions" class="active">Predictions</button>
+  <button data-tab="record">Track record</button>
+  <button data-tab="models">Models</button>
+  <button data-tab="leagues">Leagues</button>
+</nav>
+<main id="view"><div class="empty">Loading…</div></main>
+
+<script>
+const state = { tab: 'predictions', leagues: [], models: [], predictions: [], sort: {}, filters: {
+  view: 'matches', status: 'upcoming', league: '', market: '', preferredOnly: true, valueOnly: false, minConfidence: 0, search: '', allModels: false
+}};
+const MARKET_ORDER = ['Result', 'Result-U/O', 'BTTS', 'U/O-1.5', 'U/O-3.5', 'HT-Result', 'Home-Win-Either-Half', 'Away-Win-Either-Half',
+  'Home-U/O-0.5', 'Home-U/O-1.5', 'Away-U/O-0.5', 'Away-U/O-1.5'];
+const SHORT_MARKET = { 'Result': '1X2', 'Result-U/O': 'O/U 2.5', 'BTTS': 'BTTS', 'U/O-1.5': 'O/U 1.5', 'U/O-3.5': 'O/U 3.5', 'HT-Result': 'HT 1X2',
+  'Home-Win-Either-Half': 'Home wins a half', 'Away-Win-Either-Half': 'Away wins a half', 'Home-U/O-0.5': 'Home O/U 0.5',
+  'Home-U/O-1.5': 'Home O/U 1.5', 'Away-U/O-0.5': 'Away O/U 0.5', 'Away-U/O-1.5': 'Away O/U 1.5' };
+const $ = (selector) => document.querySelector(selector);
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const pct = (value, digits = 1) => value == null ? '–' : (100 * value).toFixed(digits) + '%';
+const num = (value, digits = 3) => value == null ? '–' : Number(value).toFixed(digits);
+const signed = (value, digits = 2) => value == null ? '–' : `<span class="${value > 0 ? 'pos' : value < 0 ? 'neg' : ''}">${value > 0 ? '+' : ''}${Number(value).toFixed(digits)}</span>`;
+const leagueName = (id) => { const l = state.leagues.find((x) => x.league_id === id); return l ? `${l.country} · ${l.name.replace(/-/g, ' ')}` : id; };
+const marketLabel = (m) => m === 'Result-U/O' ? 'U/O 2.5' : m;
+
+async function api(path, options) {
+  const response = await fetch(path, options);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || response.statusText);
+  return body;
+}
+
+async function load() {
+  try {
+    const [overview, leagues, models, predictions] = await Promise.all([
+      api('/api/overview'), api('/api/leagues'), api('/api/models'), api('/api/predictions')
+    ]);
+    Object.assign(state, { leagues, models, predictions });
+    $('#subtitle').textContent = `${leagues.length} leagues · ${models.length} models · last automated run: ${overview.last_run || 'never'}`;
+    render();
+  } catch (error) {
+    $('#view').innerHTML = `<div class="error">Could not load the dashboard data: ${esc(error.message)}</div>`;
+  }
+}
+
+// ---------- Sortable tables ----------
+function table(id, columns, rows, emptyText) {
+  if (!rows.length) return `<div class="table-wrap"><div class="empty">${emptyText}</div></div>`;
+  const sort = state.sort[id];
+  if (sort) {
+    const column = columns.find((c) => c.key === sort.key);
+    const value = column.sortValue || ((row) => row[column.key]);
+    rows = [...rows].sort((a, b) => {
+      const x = value(a), y = value(b);
+      if (x == null) return 1; if (y == null) return -1;
+      return (x > y ? 1 : x < y ? -1 : 0) * sort.dir;
+    });
+  }
+  const head = columns.map((c) => `<th class="${c.num ? 'num' : ''}" data-table="${id}" data-key="${c.key}">${c.label}${sort && sort.key === c.key ? ` <span class="arrow">${sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
+  const body = rows.map((row) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''}">${c.render ? c.render(row) : esc(row[c.key])}</td>`).join('')}</tr>`).join('');
+  return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+document.addEventListener('click', (event) => {
+  const th = event.target.closest('th[data-key]');
+  if (!th) return;
+  const { table: id, key } = th.dataset;
+  const current = state.sort[id];
+  state.sort[id] = { key, dir: current && current.key === key ? -current.dir : 1 };
+  render();
+});
+
+function selectOptions(values, selected, allLabel, label = (v) => v) {
+  return `<option value="">${allLabel}</option>` + values.map((v) => `<option value="${esc(v)}" ${v === selected ? 'selected' : ''}>${esc(label(v))}</option>`).join('');
+}
+const allMarkets = () => [...new Set(state.models.map((m) => m.market))];
+
+// ---------- Predictions ----------
+function renderPredictions() {
+  const f = state.filters;
+  let rows = state.predictions.filter((p) =>
+    (f.status === 'all' || p.status === f.status || (f.status === 'settled' && (p.status === 'won' || p.status === 'lost'))) &&
+    (!f.league || p.league_id === f.league) && (!f.market || p.market === f.market) &&
+    (!f.preferredOnly || p.preferred) && (p.confidence ?? 0) >= f.minConfidence &&
+    (!f.valueOnly || (p.ev > 0 && p.skill_vs_bookmaker > 0)) &&
+    (!f.search || `${p.home} ${p.away}`.toLowerCase().includes(f.search.toLowerCase())));
+  if (!state.sort.predictions) state.sort.predictions = { key: 'match_date', dir: 1 };
+
+  const columns = [
+    { key: 'match_date', label: 'Date' },
+    { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
+    { key: 'home', label: 'Match', render: (p) => `<span class="match">${esc(p.home)}</span> <span class="muted">vs</span> <span class="match">${esc(p.away)}</span>` },
+    { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
+    { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span>` },
+    { key: 'confidence', label: 'Confidence', num: true, render: (p) => `<span class="bar"><span style="width:${(p.confidence || 0) * 100}%"></span></span>${pct(p.confidence)}` },
+    { key: 'probabilities', label: 'Probabilities', sortValue: (p) => p.confidence, render: (p) => `<span class="muted">${Object.entries(p.probabilities).map(([k, v]) => `${esc(k)} ${pct(v, 0)}`).join(' · ')}</span>` },
+    { key: 'odd', label: 'Odd', num: true, render: (p) => num(p.odd, 2) },
+    { key: 'ev', label: 'EV', num: true, render: (p) => p.ev == null ? '–' : signed(p.ev) + (p.ev > 0 && !(p.skill_vs_bookmaker > 0) ? ' <span class="muted" title="Model does not beat the bookmaker on its hold-out matches">?</span>' : '') },
+    { key: 'model_id', label: 'Model', render: (p) => `${p.preferred ? '<span class="star" title="Preferred model">★</span> ' : ''}${esc(p.model_id)}` },
+    { key: 'status', label: 'Result', render: (p) => p.status === 'won' || p.status === 'lost'
+        ? `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>`
+        : `<span class="badge ${p.status === 'upcoming' ? 'upcoming' : 'awaiting'}">${esc(p.status)}</span>` },
+  ];
+
+  const byMatch = f.view === 'matches';
+  let content;
+  if (byMatch) {
+    // One row per match, one column per market (preferred model's pick).
+    const matches = {};
+    rows.filter((p) => p.preferred).forEach((p) => {
+      const key = `${p.match_date}|${p.league_id}|${p.home}|${p.away}`;
+      (matches[key] ||= { match_date: p.match_date, league_id: p.league_id, home: p.home, away: p.away, odd_1: p.odd_1, odd_x: p.odd_x, odd_2: p.odd_2, picks: {} }).picks[p.market] = p;
+    });
+    const matchRows = Object.values(matches);
+    const markets = MARKET_ORDER.filter((m) => matchRows.some((r) => r.picks[m]));
+    if (!state.sort.matches) state.sort.matches = { key: 'match_date', dir: 1 };
+    const pickCell = (p) => {
+      if (!p) return '<span class="muted">–</span>';
+      const cls = p.status === 'won' ? 'badge won' : p.status === 'lost' ? 'badge lost' : '';
+      const value = p.ev > 0 && p.skill_vs_bookmaker > 0 ? ' <span class="badge won" title="Value bet: positive expected value from a model that beats the bookmaker">value</span>' : '';
+      return `<span class="${cls}" title="${esc(p.model_id)} · ${Object.entries(p.probabilities).map(([k, v]) => `${k} ${pct(v, 0)}`).join(' · ')}"><span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span></span>${value}`;
+    };
+    content = table('matches', [
+      { key: 'match_date', label: 'Date' },
+      { key: 'league_id', label: 'League', render: (r) => esc(leagueName(r.league_id)) },
+      { key: 'home', label: 'Match', render: (r) => `<span class="match">${esc(r.home)}</span> <span class="muted">vs</span> <span class="match">${esc(r.away)}</span>` },
+      { key: 'odd_1', label: '1 · X · 2', render: (r) => r.odd_1 ? `<span class="muted">${num(r.odd_1, 2)} · ${num(r.odd_x, 2)} · ${num(r.odd_2, 2)}</span>` : '–' },
+      ...markets.map((m) => ({ key: m, label: SHORT_MARKET[m] || m, sortValue: (r) => r.picks[m] ? r.picks[m].confidence : null, render: (r) => pickCell(r.picks[m]) })),
+    ], matchRows, state.predictions.length ? 'No matches with these filters.' : 'No predictions stored yet. They are stored by the scheduled runs, or click “Predict upcoming”.')
+      + `<div class="count">${matchRows.length} matches · hover a pick for its probabilities and model</div>`;
+  } else {
+    content = table('predictions', columns, rows, state.predictions.length
+      ? 'No predictions match the filters.'
+      : 'No predictions stored yet. They are stored by the scheduled runs, or click “Predict upcoming”.')
+      + `<div class="count">${rows.length} of ${state.predictions.length} stored predictions</div>`;
+  }
+
+  return `
+    <div class="filters">
+      <label>View<select data-filter="view">
+        <option value="matches" ${byMatch ? 'selected' : ''}>By match</option>
+        <option value="list" ${byMatch ? '' : 'selected'}>All predictions</option>
+      </select></label>
+      <label>Status<select data-filter="status">
+        ${[['upcoming', 'Upcoming'], ['awaiting result', 'Awaiting result'], ['settled', 'Settled'], ['all', 'All']].map(([v, l]) => `<option value="${v}" ${f.status === v ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>
+      <label>League<select data-filter="league">${selectOptions(state.leagues.map((l) => l.league_id), f.league, 'All leagues', leagueName)}</select></label>
+      <label>Market<select data-filter="market">${selectOptions(allMarkets(), f.market, 'All markets', marketLabel)}</select></label>
+      <label>Min. confidence <span id="conf-value">${pct(f.minConfidence, 0)}</span><input type="range" min="0" max="0.9" step="0.05" value="${f.minConfidence}" data-filter="minConfidence"></label>
+      <label>Team<input type="search" placeholder="Search team" value="${esc(f.search)}" data-filter="search"></label>
+      ${byMatch ? '' : `<label class="check"><input type="checkbox" data-filter="preferredOnly" ${f.preferredOnly ? 'checked' : ''}> Preferred model only</label>`}
+      <label class="check"><input type="checkbox" data-filter="valueOnly" ${f.valueOnly ? 'checked' : ''}> Value bets only</label>
+    </div>
+    <p class="note">${byMatch ? 'Each market shows the pick of its preferred model.' : '★ marks the preferred model of each league &amp; market.'}
+      Preferred = best live record once every model has 30 settled predictions, otherwise best hold-out score from training.
+      Value bets: positive expected value from a model that beats the bookmaker on its hold-out matches.</p>
+    ${content}`;
+}
+
+// ---------- Track record ----------
+function summarize(rows) {
+  const settled = rows.filter((p) => p.status === 'won' || p.status === 'lost');
+  const bets = settled.filter((p) => p.profit != null);
+  const profit = bets.reduce((s, p) => s + p.profit, 0);
+  return {
+    settled: settled.length,
+    accuracy: settled.length ? settled.filter((p) => p.correct === 1).length / settled.length : null,
+    logLoss: settled.length ? settled.reduce((s, p) => s + p.log_loss, 0) / settled.length : null,
+    bets: bets.length, profit: bets.length ? profit : null, roi: bets.length ? profit / bets.length : null,
+  };
+}
+
+function renderRecord() {
+  const f = state.filters;
+  const scope = state.predictions.filter((p) => (f.allModels || p.preferred) && (!f.league || p.league_id === f.league) && (!f.market || p.market === f.market));
+  const s = summarize(scope);
+  const groups = {};
+  scope.forEach((p) => { (groups[`${p.league_id}|${p.market}`] ||= []).push(p); });
+  const groupRows = Object.entries(groups).map(([key, rows]) => {
+    const [league_id, market] = key.split('|');
+    return { league_id, market, ...summarize(rows), pending: rows.filter((p) => p.status === 'upcoming' || p.status === 'awaiting result').length };
+  }).filter((r) => r.settled > 0 || r.pending > 0);
+  const recent = scope.filter((p) => p.status === 'won' || p.status === 'lost').sort((a, b) => b.match_date.localeCompare(a.match_date)).slice(0, 60);
+
+  const card = (label, value) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+  return `
+    <div class="filters">
+      <label>League<select data-filter="league">${selectOptions(state.leagues.map((l) => l.league_id), f.league, 'All leagues', leagueName)}</select></label>
+      <label>Market<select data-filter="market">${selectOptions(allMarkets(), f.market, 'All markets', marketLabel)}</select></label>
+      <label class="check"><input type="checkbox" data-filter="allModels" ${f.allModels ? 'checked' : ''}> Include non-preferred models</label>
+    </div>
+    <p class="note">Stored predictions are settled when a refresh downloads their results (the Tuesday/Friday runs, or “Refresh results”).
+      Profit assumes a 1-unit stake on every pick that has bookmaker odds (Result and U/O 2.5).</p>
+    <div class="cards">
+      ${card('Settled predictions', s.settled)}${card('Accuracy', pct(s.accuracy))}${card('Avg. log loss', num(s.logLoss))}
+      ${card('Bets with odds', s.bets)}${card('Profit (units)', s.profit == null ? '–' : signed(s.profit))}${card('ROI', s.roi == null ? '–' : signed(100 * s.roi, 1) + '%')}
+    </div>
+    <h2>By league &amp; market</h2>
+    ${table('record', [
+      { key: 'league_id', label: 'League', render: (r) => esc(leagueName(r.league_id)) },
+      { key: 'market', label: 'Market', render: (r) => esc(marketLabel(r.market)) },
+      { key: 'settled', label: 'Settled', num: true }, { key: 'pending', label: 'Pending', num: true },
+      { key: 'accuracy', label: 'Accuracy', num: true, render: (r) => pct(r.accuracy) },
+      { key: 'logLoss', label: 'Log loss', num: true, render: (r) => num(r.logLoss) },
+      { key: 'profit', label: 'Profit', num: true, render: (r) => r.profit == null ? '–' : signed(r.profit) },
+      { key: 'roi', label: 'ROI', num: true, render: (r) => r.roi == null ? '–' : signed(100 * r.roi, 1) + '%' },
+    ], groupRows, 'No stored predictions yet.')}
+    <h2>Recently settled</h2>
+    ${table('recent', [
+      { key: 'match_date', label: 'Date' },
+      { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
+      { key: 'home', label: 'Match', render: (p) => `${esc(p.home)} <span class="muted">vs</span> ${esc(p.away)}` },
+      { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
+      { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span>` },
+      { key: 'actual', label: 'Actual', render: (p) => `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>` },
+      { key: 'profit', label: 'Profit', num: true, render: (p) => p.profit == null ? '–' : signed(p.profit) },
+      { key: 'model_id', label: 'Model' },
+    ], recent, 'Nothing settled yet: results of stored predictions arrive with the next refresh.')}`;
+}
+
+// ---------- Models ----------
+function renderModels() {
+  const f = state.filters;
+  const rows = state.models.filter((m) => (!f.league || m.league_id === f.league) && (!f.market || m.market === f.market));
+  if (!state.sort.models) state.sort.models = { key: 'league_id', dir: 1 };
+  return `
+    <div class="filters">
+      <label>League<select data-filter="league">${selectOptions(state.leagues.map((l) => l.league_id), f.league, 'All leagues', leagueName)}</select></label>
+      <label>Market<select data-filter="market">${selectOptions(allMarkets(), f.market, 'All markets', marketLabel)}</select></label>
+    </div>
+    <p class="note">Hold-out: the model's score on the most recent matches it was not trained on (lower log loss is better).
+      Skill vs bookmaker &gt; 0 means its Result probabilities beat the bookmaker's. Live: its record on stored predictions.
+      ★ preferred: lowest live log loss once every model of the league &amp; market has 30 settled predictions, otherwise lowest hold-out log loss.</p>
+    ${table('models', [
+      { key: 'league_id', label: 'League', render: (m) => esc(leagueName(m.league_id)) },
+      { key: 'market', label: 'Market', render: (m) => esc(marketLabel(m.market)) },
+      { key: 'model_id', label: 'Model', render: (m) => `${m.preferred ? `<span class="star" title="Preferred (${esc(m.preferred_basis)})">★</span> ` : ''}${esc(m.model_id)}` },
+      { key: 'classifier', label: 'Type' },
+      { key: 'holdout_log_loss', label: 'Hold-out log loss', num: true, render: (m) => num(m.holdout_log_loss) },
+      { key: 'holdout_accuracy', label: 'Hold-out acc.', num: true, render: (m) => pct(m.holdout_accuracy) },
+      { key: 'skill_vs_bookmaker', label: 'Skill vs bookmaker', num: true, render: (m) => m.skill_vs_bookmaker == null ? '–' : signed(100 * m.skill_vs_bookmaker, 1) + '%' },
+      { key: 'settled', label: 'Live settled', num: true },
+      { key: 'accuracy', label: 'Live acc.', num: true, render: (m) => pct(m.accuracy) },
+      { key: 'log_loss', label: 'Live log loss', num: true, render: (m) => num(m.log_loss) },
+      { key: 'roi', label: 'Live ROI', num: true, render: (m) => m.roi == null ? '–' : signed(100 * m.roi, 1) + '%' },
+      { key: 'preferred_basis', label: 'Preferred by', render: (m) => m.preferred ? esc(m.preferred_basis) : '' },
+    ], rows, 'No models saved.')}
+    <div class="count">${rows.length} models</div>`;
+}
+
+// ---------- Leagues ----------
+function renderLeagues() {
+  if (!state.sort.leagues) state.sort.leagues = { key: 'country', dir: 1 };
+  return table('leagues', [
+    { key: 'country', label: 'Country' },
+    { key: 'name', label: 'League', render: (l) => esc(l.name.replace(/-/g, ' ')) },
+    { key: 'category', label: 'Source', render: (l) => ({ main: 'football-data (main)', extra: 'football-data (extra)', explorer: 'BetExplorer' })[l.category] || esc(l.category) },
+    { key: 'matches', label: 'Matches', num: true },
+    { key: 'first_season', label: 'Since', num: true },
+    { key: 'last_match', label: 'Last match' },
+    { key: 'markets', label: 'Markets', num: true, sortValue: (l) => l.markets.length, render: (l) => `<span title="${esc(l.markets.join(', '))}">${l.markets.length}</span>` },
+    { key: 'models', label: 'Models', num: true },
+  ], state.leagues, 'No leagues created yet.');
+}
+
+function render() {
+  const view = { predictions: renderPredictions, record: renderRecord, models: renderModels, leagues: renderLeagues }[state.tab];
+  $('#view').innerHTML = view();
+}
+
+document.addEventListener('input', (event) => {
+  const key = event.target.dataset.filter;
+  if (!key) return;
+  const value = event.target.type === 'checkbox' ? event.target.checked : event.target.type === 'range' ? Number(event.target.value) : event.target.value;
+  state.filters[key] = value;
+  if (key === 'search' || key === 'minConfidence') {
+    // Re-render without losing focus on text/range inputs.
+    const focusKey = key; const caret = event.target.selectionStart;
+    render();
+    const input = document.querySelector(`[data-filter="${focusKey}"]`);
+    input.focus(); if (caret != null && input.setSelectionRange) input.setSelectionRange(caret, caret);
+  } else {
+    render();
+  }
+});
+
+$('#tabs').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-tab]');
+  if (!button) return;
+  state.tab = button.dataset.tab;
+  document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('active', b === button));
+  render();
+});
+
+// ---------- Jobs ----------
+let polling = null;
+async function startJob(name) {
+  try {
+    const result = await api(`/api/jobs?name=${name}`, { method: 'POST', headers: { 'X-ProphitBet': '1' } });
+    if (!result.started) alert(result.message);
+    pollJob();
+  } catch (error) { alert(error.message); }
+}
+async function pollJob() {
+  clearTimeout(polling);
+  const job = await api('/api/jobs');
+  const box = $('#job');
+  if (job.name) {
+    box.style.display = 'block';
+    const label = { refresh: 'Refreshing results', predict: 'Predicting upcoming fixtures' }[job.name];
+    $('#job-summary').textContent = job.running ? `${label}… (started ${job.started.slice(11)})`
+      : `${label}: ${job.exit_code === 0 ? 'finished' : 'finished with errors'} at ${job.finished.slice(11)}`;
+    $('#job-output').textContent = job.output.join('\n');
+  }
+  $('#btn-refresh').disabled = $('#btn-predict').disabled = job.running;
+  if (job.running) polling = setTimeout(pollJob, 2000);
+  else if (job.name && box.dataset.lastFinished !== job.finished) { box.dataset.lastFinished = job.finished; load(); }
+}
+$('#btn-refresh').addEventListener('click', () => startJob('refresh'));
+$('#btn-predict').addEventListener('click', () => startJob('predict'));
+
+load();
+pollJob();
+</script>
+</body>
+</html>

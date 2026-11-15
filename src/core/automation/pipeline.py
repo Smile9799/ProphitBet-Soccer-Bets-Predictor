@@ -107,6 +107,37 @@ class AutomationPipeline:
         self._footystats_failures = 0
         self._max_footystats_failures = 2
 
+        self._ledger = None
+        self._preferred = None
+
+    @property
+    def ledger(self):
+        """ Prediction ledger (storage/predictions/ledger.sqlite). """
+
+        if self._ledger is None:
+            from src.core.automation.ledger import PredictionLedger
+
+            self._ledger = PredictionLedger()
+        return self._ledger
+
+    def preferred_models(self) -> dict:
+        """ {(league_id, market): preferred model id}, computed once per pipeline. """
+
+        if self._preferred is None:
+            from src.core.automation.insights import model_scores, preferred_lookup
+
+            self._preferred = preferred_lookup(model_scores(ledger=self.ledger))
+        return self._preferred
+
+    def settle(self, league_id: str) -> int:
+        """ Settles the league's stored predictions whose results are now known. Returns the number settled. """
+
+        settled = self.ledger.settle(league_id=league_id, league_df=self._league_database.load_league(league_id=league_id))
+        if settled:
+            logger.info('[%s] Settled %d stored predictions with the latest results.', league_id, settled)
+            self._preferred = None
+        return settled
+
     @property
     def league_database(self) -> LeagueDatabase:
         return self._league_database
@@ -503,13 +534,19 @@ class AutomationPipeline:
         predictions_df = pd.concat(prediction_frames, ignore_index=True) if prediction_frames else pd.DataFrame()
         if not predictions_df.empty:
             predictions_df.insert(0, 'League', league_id)
+            preferred = self.preferred_models()
+            predictions_df['Preferred'] = [
+                'Y' if preferred.get((league_id, market)) == model_id else ''
+                for market, model_id in zip(predictions_df['Market'], predictions_df['Model'])
+            ]
             probability_columns = list(dict.fromkeys(
                 f'Prob-{label}' for target in TargetType for label in target.get_mapper()
                 if f'Prob-{label}' in predictions_df.columns
             ))
             leading_columns = [
                 'League', 'Date', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
-                'Market', 'Model', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss', 'Skill vs Bookmaker'
+                'Market', 'Model', 'Preferred', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss',
+                'Skill vs Bookmaker'
             ]
             trailing_columns = ['Passes Filters', 'Inputs', 'Source', 'Fixture Home', 'Fixture Away']
             predictions_df = predictions_df[[*leading_columns, *probability_columns, *trailing_columns]]

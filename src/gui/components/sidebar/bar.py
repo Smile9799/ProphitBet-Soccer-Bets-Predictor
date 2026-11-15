@@ -69,6 +69,7 @@ class Sidebar(QFrame):
     """
 
     page_requested = Signal(int)
+    dashboard_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -149,6 +150,22 @@ class Sidebar(QFrame):
 
         # Start at Leagues.
         self._buttons[0].setChecked(True)
+
+        # All-leagues web dashboard (not a page: it opens in the browser and works without a loaded league).
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(separator)
+        self._dashboard_button = SidebarButton(text='Dashboard (All Leagues)', icon_filepath='storage/icons/menu/fixtures-online.png')
+        self._dashboard_button.setCheckable(False)
+        self._dashboard_button.setToolTip(
+            'Open the all-leagues dashboard in your browser: predictions of every league, preferred models '
+            'and the track record of stored predictions.'
+        )
+        self._dashboard_button.clicked.connect(self.dashboard_requested.emit)
+        dashboard_wrapper = OnHoverScale(self._dashboard_button)
+        dashboard_wrapper.setFixedHeight(self._dashboard_button.minimumHeight() + 6)
+        layout.addWidget(dashboard_wrapper)
         layout.addStretch()
 
         # --- Status ---

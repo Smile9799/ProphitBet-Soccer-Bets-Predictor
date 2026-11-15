@@ -141,12 +141,68 @@ class MainMenu(QWidget):
             QTimer.singleShot(0, self._load_last_league)
 
 
+    _DASHBOARD_PORT = 8765
+
+    def _dashboard_is_running(self) -> bool:
+        import socket
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.3)
+            return probe.connect_ex(('127.0.0.1', self._DASHBOARD_PORT)) == 0
+
+    def _open_dashboard(self) -> None:
+        """ Starts the all-leagues dashboard (a separate process) if needed and opens it in the browser. """
+
+        import subprocess
+        import sys
+        from pathlib import Path
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtWidgets import QMessageBox
+
+        url = QUrl(f'http://127.0.0.1:{self._DASHBOARD_PORT}/')
+        if self._dashboard_is_running():
+            QDesktopServices.openUrl(url)
+            return
+
+        project_root = Path(__file__).resolve().parents[2]
+        try:
+            self._dashboard_process = subprocess.Popen(
+                [sys.executable, str(project_root / 'cli.py'), 'dashboard', '--no-browser', '--port', str(self._DASHBOARD_PORT)],
+                cwd=str(project_root),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as error:
+            QMessageBox.warning(self, 'Dashboard', f'Could not start the dashboard: {error}')
+            return
+
+        # Opening the browser once the server answers (it loads the model index first).
+        attempts = {'left': 60}
+
+        def wait_and_open():
+            if self._dashboard_is_running():
+                QDesktopServices.openUrl(url)
+            elif self._dashboard_process.poll() is not None:
+                QMessageBox.warning(self, 'Dashboard', 'The dashboard stopped unexpectedly. Run "python cli.py dashboard" to see why.')
+            elif attempts['left'] > 0:
+                attempts['left'] -= 1
+                QTimer.singleShot(250, wait_and_open)
+
+        wait_and_open()
+
+    def _stop_dashboard(self) -> None:
+        process = getattr(self, '_dashboard_process', None)
+        if process is not None and process.poll() is None:
+            process.terminate()
+
     def closeEvent(self, event: QCloseEvent) -> None:
         """ Called automatically when the window is closed. Stores user's config. """
 
         try:
             self._close_league_data_window()
             self._shutdown_database_initialization()
+            self._stop_dashboard()
             self._settings['settings']['window']['width'] = self.width()
             self._settings['settings']['window']['height'] = self.height()
 
@@ -305,6 +361,7 @@ class MainMenu(QWidget):
             self._workspace_stack.addWidget(QWidget())
 
         self._sidebar.page_requested.connect(self._show_workspace)
+        self._sidebar.dashboard_requested.connect(self._open_dashboard)
         self._show_workspace(0)
         self._set_league_workspaces_enabled(False)
 

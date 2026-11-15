@@ -4,7 +4,8 @@
     Examples:
         python cli.py list
         python cli.py plan                       # create the leagues/models of the plan that do not exist yet
-        python cli.py run --plan                 # plan -> refresh -> retrain -> predict (use this for scheduling)
+        python cli.py run --plan                 # refresh -> plan -> retrain -> predict (use this for scheduling)
+        python cli.py dashboard                  # all-leagues dashboard (predictions, track record, models)
         python cli.py run --all                  # refresh -> retrain -> predict of every existing league
         python cli.py refresh --league England-Premier-League-01 --rebuild
         python cli.py retrain --all --tolerance 0.005
@@ -143,6 +144,13 @@ def _run_refresh(pipeline, league_ids, args, logger) -> tuple:
         except Exception:
             logger.exception('[%s] Refresh failed.', league_id)
             ok = False
+            continue
+
+        # Settling stored predictions with the new results (track record).
+        try:
+            pipeline.settle(league_id=league_id)
+        except Exception:
+            logger.exception('[%s] Settling stored predictions failed.', league_id)
     return ok, rebuilt
 
 
@@ -192,7 +200,10 @@ def _run_predict(pipeline, league_ids, args, logger) -> bool:
         if position > 0:
             time.sleep(FIXTURE_REQUEST_DELAY_SECONDS)  # be polite to FootyStats (it rate-limits with 403)
         try:
-            runs.append(pipeline.predict(league_id=league_id, days=args.days, model_ids=args.model))
+            run = pipeline.predict(league_id=league_id, days=args.days, model_ids=args.model)
+            runs.append(run)
+            if not run.predictions.empty:
+                pipeline.ledger.record(run.predictions)
         except Exception:
             logger.exception('[%s] Prediction failed.', league_id)
             ok = False
@@ -211,6 +222,21 @@ def _run_predict(pipeline, league_ids, args, logger) -> bool:
     for filepath in written:
         logger.info('Saved: %s', filepath)
     return ok
+
+
+def _command_settle(pipeline, args, logger) -> int:
+    total = 0
+    for league_id in _selected_leagues(pipeline, args):
+        total += pipeline.settle(league_id=league_id)
+    logger.info('Settled %d predictions.', total)
+    return 0
+
+
+def _command_dashboard(_pipeline, args, logger) -> int:
+    from src.dashboard.server import serve
+
+    serve(port=args.port, open_browser=not args.no_browser)
+    return 0
 
 
 def _command_plan(pipeline, args, logger) -> int:
@@ -298,6 +324,15 @@ def _build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser('list', help='List leagues, available markets and saved models.')
     list_parser.set_defaults(handler=_command_list)
 
+    dashboard_parser = subparsers.add_parser('dashboard', help='Open the all-leagues dashboard in the browser.')
+    dashboard_parser.add_argument('--port', type=int, default=8765, help='Local port. Default: 8765.')
+    dashboard_parser.add_argument('--no-browser', action='store_true', help='Do not open the browser.')
+    dashboard_parser.set_defaults(handler=_command_dashboard, needs_lock=False)
+
+    settle_parser = subparsers.add_parser('settle', help='Settle stored predictions with the stored results.')
+    add_league_args(settle_parser)
+    settle_parser.set_defaults(handler=_command_settle)
+
     plan_parser = subparsers.add_parser('plan', help='Create the leagues and models of the plan that do not exist yet.')
     plan_parser.add_argument('--plan', default='', help=f'Plan file. Default: {DEFAULT_PLAN_PATH.relative_to(PROJECT_ROOT)}')
     plan_parser.set_defaults(handler=_command_plan)
@@ -337,6 +372,9 @@ def main() -> int:
     logger = _configure_logging(verbose=args.verbose)
 
     from src.core.automation.pipeline import AutomationPipeline
+
+    if not getattr(args, 'needs_lock', True):
+        return args.handler(None, args, logger)
 
     with _single_instance_lock():
         return args.handler(AutomationPipeline(), args, logger)

@@ -580,6 +580,21 @@ To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at
 `scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).
 **Do not run the automation while the GUI is open**, since both keep and save their own copy of the model index.
 
+## All-Leagues Dashboard & Track Record (fork)
+Click **Dashboard (All Leagues)** in the sidebar (or run `python cli.py dashboard`) to open a local web dashboard
+(`http://127.0.0.1:8765`, only reachable from this computer):
+
+* **Predictions** of every league: *By match* (one row per match, the preferred model's pick for every market) or the
+  full list of every model's prediction; filter by league, market, confidence, team and value bets.
+* **Preferred model** per league & market: the model with the best *live* record once every model of that league &
+  market has 30 settled predictions; until then, the best hold-out score from training.
+* **Track record**: every automated prediction is stored in `storage/predictions/ledger.sqlite` and settled when a
+  refresh downloads its result (correct/wrong, log loss, and profit at the bookmaker's odds for 1X2 and O/U 2.5).
+* **Models**: hold-out and live metrics of all models; **Leagues**: data coverage of every league.
+* Buttons to **refresh results** (and settle predictions) and **predict upcoming** fixtures of every league.
+
+Predictions made in the GUI's prediction dialogs are not stored in the ledger (only automated/dashboard ones).
+
 ## One-Shot Setup (fork, Linux Mint / Ubuntu)
 `scripts/setup.sh` sets up ProphitBet on a fresh machine (or safely re-runs on an existing one): installs git,
 Graphviz and Python 3.11 when missing, clones/updates this repository into
