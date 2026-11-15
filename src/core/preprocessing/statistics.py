@@ -72,17 +72,57 @@ class StatisticsEngine:
             'AWT%': self._awtp,         # Total away win percentage both as home/away.
             'ALT%': self._altp          # Total away loss percentage both as home/away.
         }
+        # Goal-based form statistics (useful for BTTS, U/O and team total markets).
+        self._form_stats = {
+            'HCS': lambda df: self._venue_form(df, df['AG'].eq(0), 'Home'),     # Recent home clean sheets as home.
+            'HFTS': lambda df: self._venue_form(df, df['HG'].eq(0), 'Home'),    # Recent home failed to score as home.
+            'HBTTS': lambda df: self._venue_form(df, self._btts(df), 'Home'),   # Recent BTTS in home matches as home.
+            'HO25': lambda df: self._venue_form(df, self._over25(df), 'Home'),  # Recent over 2.5 in home matches as home.
+            'ACS': lambda df: self._venue_form(df, df['HG'].eq(0), 'Away'),     # Recent away clean sheets as away.
+            'AFTS': lambda df: self._venue_form(df, df['AG'].eq(0), 'Away'),    # Recent away failed to score as away.
+            'ABTTS': lambda df: self._venue_form(df, self._btts(df), 'Away'),   # Recent BTTS in away matches as away.
+            'AO25': lambda df: self._venue_form(df, self._over25(df), 'Away'),  # Recent over 2.5 in away matches as away.
+            'HCST': lambda df: self._total_form(df, df['AG'].eq(0), df['HG'].eq(0), home=True),   # Home clean sheets both as home/away.
+            'HFTST': lambda df: self._total_form(df, df['HG'].eq(0), df['AG'].eq(0), home=True),  # Home failed to score both as home/away.
+            'ACST': lambda df: self._total_form(df, df['AG'].eq(0), df['HG'].eq(0), home=False),  # Away clean sheets both as home/away.
+            'AFTST': lambda df: self._total_form(df, df['HG'].eq(0), df['AG'].eq(0), home=False)  # Away failed to score both as home/away.
+        }
         self._stats_columns = {
             **self._home_stats,
             **self._away_stats,
             **self._home_away_stats,
-            **self._total_stats
+            **self._total_stats,
+            **self._form_stats
         }
         self._cache = {}
 
     @property
     def stats_columns(self) -> List[str]:
         return list(self._stats_columns.keys())
+
+    @staticmethod
+    def _btts(df: pd.DataFrame) -> pd.Series:
+        return df['HG'].gt(0) & df['AG'].gt(0)
+
+    @staticmethod
+    def _over25(df: pd.DataFrame) -> pd.Series:
+        return (df['HG'] + df['AG']).gt(2.5)
+
+    def _venue_form(self, df: pd.DataFrame, values: pd.Series, team_column: str) -> pd.Series:
+        """ Rolling statistic of a team's previous matches at the same venue (home or away) in the season. """
+
+        return values.astype(int).groupby(by=[df['Season'], df[team_column]], sort=False, group_keys=False).transform(self._aggregate)
+
+    def _total_form(self, df: pd.DataFrame, home_values: pd.Series, away_values: pd.Series, home: bool) -> pd.Series:
+        """ Rolling statistic of a team's previous matches both as home/away in the season.
+            home_values/away_values are the per-match values from the perspective of the home/away team respectively.
+        """
+
+        seasons = df['Season'].repeat(2).reset_index(drop=True)
+        teams = df[['Home', 'Away']].stack().reset_index(drop=True)
+        values = pd.DataFrame({'Home': home_values, 'Away': away_values}, dtype=int).stack().reset_index(drop=True)
+        rolled = values.groupby(by=[seasons, teams], sort=False, group_keys=False).transform(self._aggregate)
+        return (rolled.iloc[::2] if home else rolled.iloc[1::2]).reset_index(drop=True)
 
     def _hw(self, df: pd.DataFrame) -> pd.Series:
         home_wins = self._cache.get('home-wins', None)
@@ -299,7 +339,7 @@ class StatisticsEngine:
 
         agft = self._cache.get('agft', None)
         if agft is None:
-            agft = self._hgft(df=df)
+            agft = self._agft(df=df)
 
         values = hgft - agft
         return values
@@ -307,7 +347,7 @@ class StatisticsEngine:
     def _hagat(self, df: pd.DataFrame) -> pd.Series:
         hgat = self._cache.get('hgat', None)
         if hgat is None:
-            hgat = self._hgft(df=df)
+            hgat = self._hgat(df=df)
 
         agat = self._cache.get('agat', None)
         if agat is None:

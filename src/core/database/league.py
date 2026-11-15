@@ -204,7 +204,15 @@ class LeagueDatabase:
         expected_columns = {
             target.value for target in TargetType if not set(target.required_columns) & set(HALF_TIME_COLUMNS)
         }
-        return not expected_columns.issubset(history_df.columns)
+        if not expected_columns.issubset(history_df.columns):
+            return True
+
+        # Leagues computed before the HAGFT/HAGAT statistics fix (HAGFT was always 0).
+        if 'HAGFT' in history_df.columns:
+            hagft = history_df['HAGFT'].dropna()
+            if hagft.shape[0] > 0 and hagft.eq(0).all():
+                return True
+        return False
 
     def rebuild_league(self, league_id: str) -> pd.DataFrame:
         """ Re-downloads all seasons of an existing league (from its start year) and replaces its stored data.
