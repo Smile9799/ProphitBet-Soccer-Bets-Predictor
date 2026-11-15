@@ -11,6 +11,7 @@ from src.core.preprocessing.utils import (
     TargetType,
     construct_targets
 )
+from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS
 
 
 class DatasetPreprocessor:
@@ -22,13 +23,21 @@ class DatasetPreprocessor:
      """
 
     def __init__(self):
+        # Every column that is not a model input. Match outcomes (scores & market labels) must always be listed
+        # here, otherwise they would leak into the model inputs.
         self._metadata_columns = [
-            'Date', 'Season', 'Week', 'Home', 'Away', '1X', '12', 'X2', 'HG', 'AG', 'Result', 'Result-U/O'
+            'Date', 'Season', 'Week', 'Home', 'Away', '1X', '12', 'X2', 'HG', 'AG', *HALF_TIME_COLUMNS,
+            *TargetType.label_columns()
         ]
 
     @property
     def metadata_columns(self) -> List[str]:
         return self._metadata_columns
+
+    def get_metadata_columns(self, df: pd.DataFrame) -> List[str]:
+        """ Returns the metadata columns that exist in the provided dataframe (markets vary per league). """
+
+        return [column for column in self._metadata_columns if column in df.columns]
 
     def construct_inputs(
             self,
@@ -44,7 +53,7 @@ class DatasetPreprocessor:
         """
 
         # Construct inputs.
-        x = df.drop(columns=self._metadata_columns).to_numpy(dtype=np.float32)
+        x = df.drop(columns=self.get_metadata_columns(df=df)).to_numpy(dtype=np.float32)
 
         # Normalizing inputs.
         if normalizer is not None:

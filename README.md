@@ -170,6 +170,7 @@ If you are unfamiliar with installing Graphviz on macOS, follow this tutorial:
 
 ## Step 4 - Download Code
 Download the code from the github repository other by clicking on the green "Code" button above selecting Download zip or by copying this address: https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor/archive/refs/heads/main.zip
+(This fork, with extra markets and automation: https://github.com/Smile9799/ProphitBet-Soccer-Bets-Predictor)
 After the download, unzip the files into your preferred directory (e.g. *Downloads/ProphitBet*)
 
 ## Step 5 - Install Python Libraries
@@ -509,6 +510,93 @@ However, you can also specify the evaluation filters to filter
 specific odd ranges and probabilities. Finally, you can double-click on the
 fixture table to edit its values.
 ![Fixture Prediction](screenshots/Fixtures.png)
+
+## Additional Markets (fork)
+Besides **Result** (1X2) and **Result-U/O** (Under/Over 2.5), models can be trained on:
+
+| Market | Labels | Meaning | Leagues |
+|---|---|---|---|
+| `U/O-1.5`, `U/O-3.5` | U / O | Total goals under/over 1.5 and 3.5 | All |
+| `BTTS` | N / Y | Both teams to score | All |
+| `Home-U/O-0.5`, `Home-U/O-1.5` | U / O | Home team total goals | All |
+| `Away-U/O-0.5`, `Away-U/O-1.5` | U / O | Away team total goals | All |
+| `HT-Result` | H / D / A | Half-time result | Main leagues (half-time scores) |
+| `Home-Win-Either-Half`, `Away-Win-Either-Half` | N / Y | Team wins at least one of the two halves | Main leagues (half-time scores) |
+
+Half-time markets require half-time scores, which football-data.co.uk provides for the "main" leagues only.
+Leagues created before these markets existed are re-downloaded automatically on their next update.
+Outcome columns are never used as model inputs, so existing models keep working unchanged.
+
+## Current-Form Inputs & Form Statistics (fork)
+Upcoming matches are predicted from both teams' **current form**: the match is appended after the league's played
+matches and its statistics are computed by the same engine used for training (so inputs are built exactly like the
+training rows). The original app copied the statistics of the teams' last meeting at the same venue, which could be
+a season old and was unavailable for teams that had not met. That method is now only a fallback early in the season,
+when teams have not played enough matches yet.
+
+New goal-based statistics can be selected when creating a league: clean sheets (`HCS`, `ACS`, `HCST`, `ACST`),
+failed to score (`HFTS`, `AFTS`, `HFTST`, `AFTST`), BTTS (`HBTTS`, `ABTTS`) and over 2.5 (`HO25`, `AO25`).
+The `HAGFT` (always 0) and `HAGAT` (used goals forward) statistics were fixed; leagues computed before the fix are
+rebuilt automatically, and their models are retrained.
+
+## Automation (fork)
+`cli.py` creates leagues, trains models, refreshes data, retrains models and predicts fixtures without the GUI:
+
+```bash
+python cli.py list                         # leagues, available markets and saved models
+python cli.py plan                         # create the plan's missing leagues & models (see below)
+python cli.py run --plan                   # refresh -> plan -> retrain -> predict (for scheduled runs)
+python cli.py run --all                    # refresh -> retrain -> predict of every existing league
+python cli.py refresh --all                # download the latest matches (--rebuild re-downloads all seasons)
+python cli.py retrain --all                # retrain saved models on the latest matches
+python cli.py predict --all --days 7       # predict the next 7 days of fixtures with every saved model
+```
+
+* **Plan**: copy `automation_plan.example.json` to `storage/configs/automation_plan.json` and list the leagues and
+  models (classifier + markets, optional hyperparameter tuning trials) you want. Every run creates whatever is missing,
+  so adding a league or market to the plan is enough to have it built on the next scheduled run.
+* **Fixtures** come from FootyStats; when it fails (it rate-limits with 403) or lacks odds, football-data.co.uk's
+  fixture files are used (main and extra leagues; they cover the next few days and include Over/Under 2.5 odds).
+
+* **Retraining** reuses each model's saved hyperparameters and hold-out size. A retrained model replaces the saved one
+  only if its log loss on the most recent hold-out matches is not worse than the saved model's on the same matches
+  (`--tolerance` allows a small increase, `--force` always replaces). Models are skipped when no new matches were played.
+  The replaced model is backed up to `storage/leagues/<league>/model_backups/<model>/`.
+* **Predictions** are written to `storage/predictions/<date>/` (a CSV per league and a `predictions.xlsx` workbook with a
+  `Skipped` sheet listing matches that could not be predicted and why). `EV` is the expected profit per unit stake of
+  betting on the prediction (Result and U/O 2.5 markets, when odds are known). The `Value Bets` sheet lists positive-EV
+  bets **only from models that beat the bookmaker** on their hold-out matches (`Skill vs Bookmaker` > 0): EV from a
+  model that is worse than the bookmaker is noise. Matches passing a model's saved evaluation
+  filters are flagged in the `Passes Filters` column. `Fixture Home`/`Fixture Away` show the original FootyStats names
+  to verify the automatic team-name matching.
+* **Logs** are written to `storage/logs/automation.log`.
+
+To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at 06:30:
+
+```bash
+30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
+```
+
+`scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).
+**Do not run the automation while the GUI is open**, since both keep and save their own copy of the model index.
+
+## Backups to MEGA (fork)
+League data, trained models, tuning studies and predictions are not stored in git. `scripts/backup_to_mega.sh` archives
+`storage/leagues`, `storage/predictions` and `storage/configs` and uploads the archive to `MEGA:/ProphitBet-Backups`
+(the latest 8 are kept); `scripts/run_automation.sh` runs it after every scheduled run.
+
+One-time setup with [MEGAcmd](https://mega.io/cmd) (Ubuntu 24.04 / Linux Mint 22 package shown):
+
+```bash
+wget https://mega.nz/linux/repo/xUbuntu_24.04/amd64/megacmd-xUbuntu_24.04_amd64.deb
+sudo apt install ./megacmd-xUbuntu_24.04_amd64.deb
+mega-login you@example.com          # prompts for the password; the session is remembered
+scripts/backup_to_mega.sh           # first backup
+```
+
+Restore the latest backup (current data is first moved to `storage/pre-restore-<timestamp>/`) with
+`scripts/restore_from_mega.sh`, or a specific one with `scripts/restore_from_mega.sh prophitbet-<date>-<time>.tar.gz`.
+An rclone remote named `mega` works as an alternative to MEGAcmd.
 
 ## Help & Support
 ProphitBet-v3 introduces a redesigned *elp & Support menu, providing an 

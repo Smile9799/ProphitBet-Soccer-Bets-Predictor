@@ -32,7 +32,7 @@ class ClassifierExplainer(ABC):
         self.valid_df = df.dropna().reset_index(drop=True)
 
         self._dataset_preprocessor = DatasetPreprocessor()
-        self._metadata_columns = self._dataset_preprocessor.metadata_columns
+        self._metadata_columns = self._dataset_preprocessor.get_metadata_columns(df=self.valid_df)
         self.target_names = list(self.target_type.get_mapper().keys())
         self.feature_names = self.valid_df.columns.drop(self._metadata_columns).tolist()
 

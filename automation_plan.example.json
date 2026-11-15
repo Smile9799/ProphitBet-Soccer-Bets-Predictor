@@ -1,0 +1,44 @@
+{
+  "_comment": "Copy to storage/configs/automation_plan.json and edit. 'python cli.py run --plan' creates missing leagues/models, then refreshes, retrains and predicts. Leagues: country/name as in storage/configs/leagues.json. Markets ('targets'): Result, Result-U/O, U/O-1.5, U/O-3.5, BTTS, Home-U/O-0.5, Home-U/O-1.5, Away-U/O-0.5, Away-U/O-1.5, HT-Result, Home-Win-Either-Half, Away-Win-Either-Half, or 'all'. Classifiers: NaiveBayes, RandomForest, KNearestNeighbors, DiscriminantAnalysis, LogisticRegressor, SupportVectorMachine, DecisionTree, XGBoost, LightGBM.",
+  "predict_days": 7,
+  "retrain_tolerance": 0.0,
+  "league_defaults": {
+    "start_year": 2015,
+    "match_history_window": 3,
+    "goal_diff_margin": 2,
+    "aggregation": "sum",
+    "stats_columns": "all"
+  },
+  "model_defaults": {
+    "test_size": 400,
+    "normalizer": "Standard",
+    "calibrate_probabilities": true,
+    "tune_trials": 0,
+    "tune_metric": "Log Loss"
+  },
+  "leagues": [
+    {
+      "country": "England",
+      "name": "Premier-League",
+      "models": [
+        {"classifier": "LogisticRegressor", "targets": "all"},
+        {"classifier": "LightGBM", "targets": ["Result", "Result-U/O", "BTTS"], "tune_trials": 30}
+      ]
+    },
+    {
+      "country": "Spain",
+      "name": "La-Liga",
+      "models": [
+        {"classifier": "LogisticRegressor", "targets": ["Result", "Result-U/O", "BTTS", "Home-Win-Either-Half"]}
+      ]
+    },
+    {
+      "country": "Brazil",
+      "name": "Serie-A",
+      "start_year": 2015,
+      "models": [
+        {"classifier": "LogisticRegressor", "targets": ["Result", "Result-U/O", "BTTS"], "test_size": 300}
+      ]
+    }
+  ]
+}

@@ -83,12 +83,14 @@ class EvaluateModelDialog(QDialog):
         self._model_database = model_database
         self._agent_database = agent_database
 
-        # Fetching model ids per target.
-        self._model_ids = {target_type: [] for target_type in TargetType}
+        # Fetching model ids per target. Only targets (markets) available in the league's data are supported.
+        self._available_targets = TargetType.available(self._df)
+        self._model_ids = {target_type: [] for target_type in self._available_targets}
         league_models = self._model_database.index.get(self._model_database.league_id, {})
         for model_id, model_config in league_models.items():
             target_type = model_config.classifier_config['target_type']
-            self._model_ids[target_type].append(model_id)
+            if target_type in self._model_ids:
+                self._model_ids[target_type].append(model_id)
 
         # Constructing metrics table.
         metric_columns = CLASSIFICATION_METRICS + PROBABILITY_METRICS + SKILL_METRICS + BETTING_PERFORMANCE_METRICS
@@ -100,10 +102,11 @@ class EvaluateModelDialog(QDialog):
                 f'Prob-{target_class}'
                 for target_class in target_type.get_mapper()
             ]
-            for target_type in TargetType
+            for target_type in self._available_targets
         }
-        self._probability_columns = sum(self._target_columns.values(), [])
-        for target_type in TargetType:
+        # Targets sharing class labels (e.g. U/O markets) share probability columns.
+        self._probability_columns = list(dict.fromkeys(sum(self._target_columns.values(), [])))
+        for target_type in self._available_targets:
             self._target_columns[target_type].insert(0, target_type.value)
 
         # Computing odd min-max values.
@@ -115,7 +118,9 @@ class EvaluateModelDialog(QDialog):
         }
 
         # Extracting targets.
-        self._targets_dict = {target_type.value: self._df[target_type.value] for target_type in TargetType}
+        self._targets_dict = {
+            target_type.value: self._df[target_type.value] for target_type in self._available_targets
+        }
 
         # Declaring Placeholders.
         self._target_type = None
@@ -357,9 +362,16 @@ class EvaluateModelDialog(QDialog):
         page_layout.addWidget(metrics_group)
 
         # Constructing dataframe for the table.
+        # The first 13 columns are always visible; target and probability columns are shown per selected target.
+        extra_target_columns = [
+            target_type.value
+            for target_type in self._available_targets
+            if target_type not in (TargetType.RESULT, TargetType.RESULT_UNDER_OVER)
+        ]
         table_df = self._df[[
-            'Date', 'Season', 'Week', 'Home', 'Away', '1', 'X', '2', '1X', '12', 'X2', 'HG', 'AG', 'Result', 'Result-U/O'
-        ]]
+            'Date', 'Season', 'Week', 'Home', 'Away', '1', 'X', '2', '1X', '12', 'X2', 'HG', 'AG', 'Result', 'Result-U/O',
+            *extra_target_columns
+        ]].copy()
         table_df['Predicted'] = ''
         for column in self._probability_columns:
             table_df[column] = ''

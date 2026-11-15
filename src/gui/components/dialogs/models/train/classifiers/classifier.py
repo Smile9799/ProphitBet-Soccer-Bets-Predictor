@@ -144,7 +144,8 @@ class ClassifierDialog(QDialog):
         target_label = QLabel('Target Type', model_frame)
         self.target_combo = QComboBox(model_frame)
         self.target_combo.setToolTip('Select the match outcome that the classifier will predict.')
-        for target in TargetType:
+        # Only markets available in the league's data (e.g. half-time markets need half-time scores).
+        for target in TargetType.available(self._df):
             self.target_combo.addItem(target.value, userData=target)
         result_index = self.target_combo.findData(TargetType.RESULT)
         self.target_combo.setCurrentIndex(max(result_index, 0))

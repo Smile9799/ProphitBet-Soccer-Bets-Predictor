@@ -21,25 +21,34 @@ from PySide6.QtWidgets import (
 )
 
 from src.core.agents.environments.actions import Action
-from src.core.preprocessing.utils.inputs import construct_inputs_by_match
-from src.core.preprocessing.utils.targets import TargetType
+from src.core.preprocessing.utils.inputs import (
+    construct_inputs_by_form,
+    construct_inputs_by_match,
+    latest_season_and_week,
+    prepare_prediction_row,
+)
+from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
 from src.gui.widgets import ExcelTable
 
 if TYPE_CHECKING:
     from src.core.database.agent import AgentDatabase
     from src.core.database.model import ModelDatabase
+    from src.core.leagues.league import LeagueConfig
 
 
 class ManualPredictionDialog(QDialog):
     """Build and predict one manually entered future match."""
 
     _BASE_COLUMNS = ['Date', 'Season', 'Week', 'Home', 'Away', '1', 'X', '2']
-    _PROBABILITY_COLUMNS = ['Prob-H', 'Prob-D', 'Prob-A', 'Prob-U', 'Prob-O']
+    # One probability column per distinct class label across all markets (e.g. H/D/A, U/O, N/Y).
+    _PROBABILITY_COLUMNS = list(dict.fromkeys(
+        f'Prob-{label}' for target_type in TargetType for label in target_type.get_mapper()
+    ))
     _OUTPUT_COLUMNS = ['Predicted', *_PROBABILITY_COLUMNS, 'Betting']
     _DOUBLE_CHANCE_LABELS = ['1X', '12', 'X2']
     _METADATA_COLUMNS = {
         'Date', 'Season', 'Week', 'Home', 'Away', '1X', '12', 'X2',
-        'HG', 'AG', 'Result', 'Result-U/O',
+        'HG', 'AG', *HALF_TIME_COLUMNS, *TargetType.label_columns(),
     }
 
     def __init__(
@@ -48,9 +57,12 @@ class ManualPredictionDialog(QDialog):
             model_database: ModelDatabase,
             agent_database: AgentDatabase,
             parent: Optional[QWidget] = None,
+            league_config: Optional['LeagueConfig'] = None,
     ):
         super().__init__(parent)
 
+        # With the league config, match inputs are computed from the teams' current form.
+        self._league_config = league_config
         self._source_df = df
         self._league_df = df.dropna(ignore_index=True)
         self._model_database = model_database
@@ -61,7 +73,7 @@ class ManualPredictionDialog(QDialog):
             if column not in self._METADATA_COLUMNS and column not in self._BASE_COLUMNS
         ]
 
-        self._model_ids = {target_type: [] for target_type in TargetType}
+        self._model_ids = {target_type: [] for target_type in TargetType.available(self._league_df)}
         league_models = self._model_database.index.get(self._model_database.league_id, {})
         for model_id, model_config in league_models.items():
             target_type = model_config.classifier_config.get('target_type')
@@ -78,7 +90,7 @@ class ManualPredictionDialog(QDialog):
 
         self._target_probability_columns = {
             target_type: [f'Prob-{label}' for label in target_type.get_mapper()]
-            for target_type in TargetType
+            for target_type in self._model_ids
         }
         self._prediction_df: Optional[pd.DataFrame] = None
         self._match_df: Optional[pd.DataFrame] = None
@@ -317,17 +329,35 @@ class ManualPredictionDialog(QDialog):
         return home, away, odd_1, odd_x, odd_2
 
     def _latest_season_and_week(self) -> tuple[object, int]:
-        dates = pd.to_datetime(self._source_df['Date'], errors='coerce')
-        if dates.notna().any():
-            latest_season = self._source_df.loc[dates.idxmax(), 'Season']
-        else:
-            latest_season = self._source_df['Season'].max()
+        return latest_season_and_week(self._source_df)
 
-        season_rows = self._source_df[self._source_df['Season'] == latest_season]
-        last_week = pd.to_numeric(season_rows['Week'], errors='coerce').max()
-        if pd.isna(last_week):
-            raise ValueError('Could not determine the last week of the current season.')
-        return latest_season, int(last_week) + 1
+    def _build_match_input(self, match: pd.Series, match_date: str) -> Optional[pd.Series]:
+        """Build the complete model input row of an upcoming match.
+
+        Uses the teams' current form when the league config is known and both
+        teams have played enough matches this season. Otherwise, it falls back
+        to the original method: the teams' last meeting at the same venue.
+        Models and agents share the historical dataframe preprocessing contract,
+        which requires the metadata columns; neutral outcome values are kept
+        only in the private prediction input and are never shown.
+        """
+
+        if self._league_config is not None:
+            matches_df = match.to_frame().T.assign(Date=match_date).reset_index(drop=True)
+            form_row = construct_inputs_by_form(
+                league_df=self._source_df,
+                matches_df=matches_df,
+                league_config=self._league_config,
+            ).iloc[0]
+            if not form_row[self._feature_columns].isna().any():
+                return form_row
+
+        row = construct_inputs_by_match(league_df=self._league_df, match_df=match)
+        if row is None:
+            return None
+
+        latest_season, next_week = self._latest_season_and_week()
+        return prepare_prediction_row(row=row, match_date=match_date, season=latest_season, week=next_week)
 
     def _fetch_match(self) -> None:
         self._prediction_df = None
@@ -345,31 +375,18 @@ class ManualPredictionDialog(QDialog):
         )
 
         try:
-            row = construct_inputs_by_match(league_df=self._league_df, match_df=match)
+            row = self._build_match_input(
+                match=match,
+                match_date=datetime.now().strftime('%Y-%m-%d'),
+            )
             if row is None:
-                self._set_error('input', 'No historical match was found for the selected Home/Away pairing.')
+                self._set_error(
+                    'input',
+                    'Not enough matches this season, and no historical match was found for the selected '
+                    'Home/Away pairing.',
+                )
                 return
 
-            row = row.copy()
-            latest_season, next_week = self._latest_season_and_week()
-            row['Date'] = datetime.now().strftime('%Y-%m-%d')
-            row['Season'] = latest_season
-            row['Week'] = next_week
-
-            odd_1_probability = 1.0 / odd_1
-            odd_x_probability = 1.0 / odd_x
-            odd_2_probability = 1.0 / odd_2
-            row['1X'] = max(round(1.0 / (odd_1_probability + odd_x_probability), 2), 1.0)
-            row['12'] = max(round(1.0 / (odd_1_probability + odd_2_probability), 2), 1.0)
-            row['X2'] = max(round(1.0 / (odd_x_probability + odd_2_probability), 2), 1.0)
-
-            # Models and agents share the historical dataframe preprocessing
-            # contract, which requires these metadata columns. Neutral values
-            # are kept only in the private prediction input and are never shown.
-            row['HG'] = 0
-            row['AG'] = 0
-            row[TargetType.RESULT.value] = 'D'
-            row[TargetType.RESULT_UNDER_OVER.value] = 'U'
             self._prediction_df = row.to_frame().T.reset_index(drop=True)
 
             display_row = row.drop(

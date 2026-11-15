@@ -1,0 +1,20 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Local user data: downloaded leagues, trained models, studies, predictions, logs
+storage/leagues/
+storage/predictions/
+storage/logs/
+
+# Local backups / editor files
+*.sh_bak
+*.swp
+.idea/
+.vscode/
+
+storage/pre-restore-*/

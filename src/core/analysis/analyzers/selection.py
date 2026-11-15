@@ -68,7 +68,7 @@ class FeatureSelectionAnalyzer(Analyzer):
             'normalized_variance': self._variance_scores(x=x_scaled, feature_names=columns),
             'boruta': {}
         }
-        for target in TargetType:
+        for target in TargetType.available(valid_metadata):
             y = valid_metadata[target.value].map(target.get_mapper()).to_numpy(dtype=np.int32)
             selection_dict['boruta'][target.value] = self._boruta_rankings(x=x, y=y, feature_names=columns)
         return selection_dict
