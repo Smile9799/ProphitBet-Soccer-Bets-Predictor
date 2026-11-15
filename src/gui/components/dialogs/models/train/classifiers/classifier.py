@@ -52,7 +52,10 @@ class ClassifierDialog(QDialog):
 
         self._model_cls = model_cls
         self._league_config = league_config
-        self._df = df.dropna().sort_values(by='Date', ascending=False).reset_index(drop=True)
+        from src.core.preprocessing.dataset import drop_incomplete
+
+        # Matches with missing optional market data (e.g. corners) are kept; they are only excluded from those markets.
+        self._df = drop_incomplete(df).sort_values(by='Date', ascending=False).reset_index(drop=True)
 
         self._model_database = database
 

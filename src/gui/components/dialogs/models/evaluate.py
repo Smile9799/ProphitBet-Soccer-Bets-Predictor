@@ -79,12 +79,16 @@ class EvaluateModelDialog(QDialog):
     ):
         super().__init__(parent)
 
-        self._df = df.dropna(ignore_index=True)
+        from src.core.preprocessing.dataset import drop_incomplete
+
+        # Optional market data (e.g. corners) may be missing for some matches: such markets are only evaluated here when
+        # every match has their data (strict availability below).
+        self._df = drop_incomplete(df, ignore_index=True)
         self._model_database = model_database
         self._agent_database = agent_database
 
         # Fetching model ids per target. Only targets (markets) available in the league's data are supported.
-        self._available_targets = TargetType.available(self._df)
+        self._available_targets = TargetType.available(self._df, strict=True)
         self._model_ids = {target_type: [] for target_type in self._available_targets}
         league_models = self._model_database.index.get(self._model_database.league_id, {})
         for model_id, model_config in league_models.items():

@@ -4,6 +4,7 @@ import pandas as pd
 from typing import Generator, Optional, Tuple, Union
 from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
+from src.core.preprocessing.dataset import has_missing_core
 
 
 def train_test_split(df: pd.DataFrame, test_size: Union[int, float]) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -19,7 +20,7 @@ def train_test_split(df: pd.DataFrame, test_size: Union[int, float]) -> Tuple[pd
     # Validate that the matches are provided in descending order, otherwise the calculations will be wrong.
     if not df['Date'].is_monotonic_decreasing:
         raise ValueError('Expected dates to be sorted in a descending order.')
-    if df.isna().any().any():
+    if has_missing_core(df):
         raise ValueError('Cannot split inputs to train-test with missing values. Drop rows with missing values first.')
 
     if isinstance(test_size, float):
@@ -55,7 +56,7 @@ def cross_validation(
     """
 
     # Validate Dataframe.
-    if df.isna().any().any():
+    if has_missing_core(df):
         raise ValueError('Cannot apply cross validation with nan rows. Drop nans first.')
 
     cv_generator = StratifiedKFold(n_splits=k_folds, shuffle=True, random_state=seed).split(df, targets)
@@ -88,7 +89,7 @@ def sliding_cross_validation(
     """
 
     # Validate Dataframe.
-    if df.isna().any().any():
+    if has_missing_core(df):
         raise ValueError('Cannot apply cross validation with nan rows. Drop nans first.')
     if not df['Date'].is_monotonic_decreasing:
         raise ValueError('Expected dates to be sorted in a descending order.')

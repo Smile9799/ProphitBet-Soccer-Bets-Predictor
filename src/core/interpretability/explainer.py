@@ -6,7 +6,7 @@ import shap
 from abc import ABC, abstractmethod
 from typing import Optional
 from src.core.database.model import ModelDatabase
-from src.core.preprocessing.dataset import DatasetPreprocessor, construct_targets
+from src.core.preprocessing.dataset import DatasetPreprocessor, construct_targets, drop_incomplete
 
 
 class ClassifierExplainer(ABC):
@@ -29,12 +29,12 @@ class ClassifierExplainer(ABC):
         self.normalizer = self.model_config.classifier_config['normalizer']
 
         # Preprocessing dataframe.
-        self.valid_df = df.dropna().reset_index(drop=True)
+        self.valid_df = drop_incomplete(df, target_type=self.target_type).reset_index(drop=True)
 
         self._dataset_preprocessor = DatasetPreprocessor()
         self._metadata_columns = self._dataset_preprocessor.get_metadata_columns(df=self.valid_df)
         self.target_names = list(self.target_type.get_mapper().keys())
-        self.feature_names = self.valid_df.columns.drop(self._metadata_columns).tolist()
+        self.feature_names = self._dataset_preprocessor.feature_names(df=self.valid_df, target_type=self.target_type)
 
         # Computing shap values.
         self.train_df = self.valid_df.iloc[-self.model_config.num_train_samples:]
@@ -80,10 +80,10 @@ class ClassifierExplainer(ABC):
             with open(self._explanation_fp, mode='rb') as pickle_file:
                 explanation_dict = pickle.load(pickle_file)
         else:
-            x_train_values, _ = self._dataset_preprocessor.construct_inputs(df=self.train_df, normalizer=self.normalizer,)
+            x_train_values, _ = self._dataset_preprocessor.construct_inputs(df=self.train_df, normalizer=self.normalizer, target_type=self.target_type)
             x_train = pd.DataFrame(data=x_train_values, columns=self.feature_names)
             y_train = construct_targets(df=self.train_df, target_type=self.target_type, one_hot=False)
-            x_test_values, _ = self._dataset_preprocessor.construct_inputs(df=self.test_df, normalizer=self.normalizer,)
+            x_test_values, _ = self._dataset_preprocessor.construct_inputs(df=self.test_df, normalizer=self.normalizer, target_type=self.target_type)
             x_test = pd.DataFrame(data=x_test_values, columns=self.feature_names)
             y_test = construct_targets(df=self.test_df, target_type=self.target_type, one_hot=False)
 

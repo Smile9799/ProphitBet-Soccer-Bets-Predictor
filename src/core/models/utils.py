@@ -59,8 +59,10 @@ def create_model(
 
     report = {'league_id': league_id, 'model_id': model_id}
 
-    # Dropping missing rows.
-    valid_df = df.dropna()
+    # Dropping matches with missing values (for optional markets, also the matches without their data).
+    from src.core.preprocessing.dataset import drop_incomplete
+
+    valid_df = drop_incomplete(df, target_type=model_params['target_type'])
 
     # Splitting dataset into train-test.
     train_df, test_df = train_test_split(df=valid_df, test_size=test_size)

@@ -127,6 +127,7 @@ class LeagueDatabase:
             aggregation=league_config.aggregation
         )
         df = stats_engine.compute_stats(df=df, stats_columns=league_config.stats_columns)
+        df = stats_engine.compute_market_stats(df=df)
 
         # Sorting the league data by Date in descending order and by Home in ascending one.
         df = df.sort_values(by=['Date'], ascending=False, ignore_index=True)
@@ -194,25 +195,39 @@ class LeagueDatabase:
         self.save_league(df=df, league_config=league_config)
         return df
 
-    def _requires_rebuild(self, league_config: LeagueConfig, history_df: pd.DataFrame) -> bool:
-        """ Whether the stored league lacks columns that a fresh download would provide (e.g. new markets). """
+    def rebuild_reason(self, league_config: LeagueConfig, history_df: pd.DataFrame) -> Optional[str]:
+        """ Why the stored league must be re-downloaded, or None:
+                * "statistics": its statistics were computed before a fix (saved models' inputs change: retrain them).
+                * "markets": it lacks market columns that a fresh download provides (saved models are unaffected).
+        """
 
-        from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
-
-        # Full-time markets are available for every league; half-time ones only if the source provides them,
-        # so only the former are checked (avoids re-downloading leagues without half-time data on every update).
-        expected_columns = {
-            target.value for target in TargetType if not set(target.required_columns) & set(HALF_TIME_COLUMNS)
-        }
-        if not expected_columns.issubset(history_df.columns):
-            return True
+        from src.core.preprocessing.utils.targets import ASIAN_HANDICAP_LINE, HALF_TIME_COLUMNS, TargetType
 
         # Leagues computed before the HAGFT/HAGAT statistics fix (HAGFT was always 0).
         if 'HAGFT' in history_df.columns:
             hagft = history_df['HAGFT'].dropna()
             if hagft.shape[0] > 0 and hagft.eq(0).all():
-                return True
-        return False
+                return 'statistics'
+
+        # Full-time goal markets are available for every league; half-time and optional ones (corners, cards, Asian
+        # handicap) only if the source provides them, so only the former are checked (avoids re-downloading leagues
+        # without such data on every update).
+        expected_columns = {
+            target.value for target in TargetType
+            if not target.optional and not set(target.required_columns) & set(HALF_TIME_COLUMNS)
+        }
+        if not expected_columns.issubset(history_df.columns):
+            return 'markets'
+
+        # Main leagues stored before corners, cards and Asian handicap data were kept (all main leagues provide the line).
+        if league_config.league.category == 'main' and ASIAN_HANDICAP_LINE not in history_df.columns:
+            return 'markets'
+        return None
+
+    def _requires_rebuild(self, league_config: LeagueConfig, history_df: pd.DataFrame) -> bool:
+        """ Whether the stored league lacks columns or fixes that a fresh download would provide. """
+
+        return self.rebuild_reason(league_config=league_config, history_df=history_df) is not None
 
     def rebuild_league(self, league_id: str) -> pd.DataFrame:
         """ Re-downloads all seasons of an existing league (from its start year) and replaces its stored data.

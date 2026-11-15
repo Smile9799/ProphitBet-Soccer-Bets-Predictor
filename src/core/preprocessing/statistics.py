@@ -500,6 +500,47 @@ class StatisticsEngine:
         values = ltp.iloc[1::2].reset_index(drop=True)
         return values
 
+    def compute_market_stats(self, df: pd.DataFrame) -> pd.DataFrame:
+        """ Computes the form statistics of the optional market data (corners, cards), when the league provides it:
+                * HCF / HCA: recent corners for / against the home team in its home matches.
+                * ACF / ACA: recent corners for / against the away team in its away matches.
+                * HBK / HBKA: recent cards (yellow 1, red 2) of the home team / its opponents in its home matches.
+                * ABK / ABKA: recent cards of the away team / its opponents in its away matches.
+            Matches whose window contains missing data get missing statistics (used only by corner/card markets).
+
+            Args
+            ----
+            :param df: (pd.DataFrame): League's dataframe sorted by date (ascending), with a default index.
+        """
+
+        from src.core.preprocessing.utils.targets import CARD_COLUMNS, CORNER_COLUMNS, MARKET_STATS, RED_CARD_WEIGHT
+
+        def venue_form(values: pd.Series, team_column: str) -> pd.Series:
+            return values.astype(float).groupby(by=[df['Season'], df[team_column]], sort=False, group_keys=False).transform(self._aggregate)
+
+        def number(column: str) -> pd.Series:
+            return pd.to_numeric(df[column], errors='coerce')
+
+        stats = {}
+        if set(CORNER_COLUMNS).issubset(df.columns):
+            home_corners, away_corners = number('HC'), number('AC')
+            stats.update({
+                'HCF': venue_form(home_corners, 'Home'), 'HCA': venue_form(away_corners, 'Home'),
+                'ACF': venue_form(away_corners, 'Away'), 'ACA': venue_form(home_corners, 'Away'),
+            })
+        if set(CARD_COLUMNS).issubset(df.columns):
+            home_cards = number('HY') + RED_CARD_WEIGHT*number('HR')
+            away_cards = number('AY') + RED_CARD_WEIGHT*number('AR')
+            stats.update({
+                'HBK': venue_form(home_cards, 'Home'), 'HBKA': venue_form(away_cards, 'Home'),
+                'ABK': venue_form(away_cards, 'Away'), 'ABKA': venue_form(home_cards, 'Away'),
+            })
+
+        df = df.drop(columns=[column for column in MARKET_STATS if column in df.columns])
+        if not stats:
+            return df
+        return pd.concat([df, pd.DataFrame(stats, index=df.index)], axis=1)
+
     def compute_stats(self, df: pd.DataFrame, stats_columns: List[str]) -> pd.DataFrame:
         """ Computes the requested statistics for each season.
 

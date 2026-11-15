@@ -88,7 +88,7 @@ class FeatureImportanceAnalyzer(Analyzer):
 
         # Constructing targets and calculating coefficients for each target type.
         importance_dict = {'linear_coefficients': {}, 'gini_impurity_scores': {}}
-        for target in TargetType.available(valid_metadata):
+        for target in TargetType.available(valid_metadata, strict=True):
             mapper = target.get_mapper()
             y = valid_metadata[target.value].map(mapper).to_numpy(dtype=np.int32)
             importance_dict['linear_coefficients'][target.value] = self._linear_coefficients(

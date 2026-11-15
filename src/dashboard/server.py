@@ -129,7 +129,8 @@ class DashboardData:
                 return 'upcoming' if isinstance(kickoff_time, str) and kickoff_time > now_time else 'awaiting result'
 
             df['status'] = [
-                ('won' if correct == 1 else 'lost') if pd.notna(settled_at) else pending_status(match_date, kickoff_time)
+                (('won' if correct == 1 else 'lost') if pd.notna(correct) else 'push') if pd.notna(settled_at)
+                else pending_status(match_date, kickoff_time)
                 for settled_at, correct, match_date, kickoff_time
                 in zip(df['settled_at'], df['correct'], df['match_date'], df['kickoff_time'])
             ]

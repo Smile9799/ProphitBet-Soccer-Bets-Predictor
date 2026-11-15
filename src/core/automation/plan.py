@@ -194,8 +194,10 @@ class PlanExecutor:
         from src.core.preprocessing.utils.sampling import SamplerType
 
         league_id = league_spec.league_id
+        from src.core.preprocessing.dataset import drop_incomplete
+
         df = self._league_database.load_league(league_id=league_id)
-        valid_df = df.dropna().sort_values(by='Date', ascending=False).reset_index(drop=True)
+        valid_df = drop_incomplete(df).sort_values(by='Date', ascending=False).reset_index(drop=True)
         available_targets = TargetType.available(valid_df)
         model_database = ModelDatabase(league_id=league_id)
 

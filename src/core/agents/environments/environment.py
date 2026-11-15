@@ -64,7 +64,9 @@ class BettingEnvironment(gym.Env):
             random.seed(seed)
 
         # Validating dataframe.
-        if df.isna().any().any():
+        from src.core.preprocessing.dataset import has_missing_core
+
+        if has_missing_core(df):
             raise ValueError('Invalid dataframe: found missing values. Remove nan values before initializing env.')
 
         required_columns = ['Season', 'Week', '1', 'X', '2', '1X', '12', 'X2', TargetType.RESULT.value]

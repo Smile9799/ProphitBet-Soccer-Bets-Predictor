@@ -93,6 +93,20 @@ class MainLeagueDownloader(LeagueDownloader):
         # Concatenating all dataframes.
         df = pd.concat(dfs_list, axis=0, ignore_index=True)
 
+        # Asian handicap line & odds were named BbAHh / BbAvAHH / BbAvAHA before the 2019 season.
+        merged_columns = {}
+        for column, fallbacks in {
+            'AHh': ['BbAHh'], 'AHOddH': ['AvgAHH', 'BbAvAHH', 'B365AHH'], 'AHOddA': ['AvgAHA', 'BbAvAHA', 'B365AHA']
+        }.items():
+            merged = pd.to_numeric(df[column], errors='coerce') if column in df.columns else pd.Series(float('nan'), index=df.index)
+            for fallback in fallbacks:
+                if fallback in df.columns:
+                    merged = merged.fillna(pd.to_numeric(df[fallback], errors='coerce'))
+            if merged.notna().any():
+                merged_columns[column] = merged
+        if merged_columns:
+            df = pd.concat([df.drop(columns=list(merged_columns), errors='ignore'), pd.DataFrame(merged_columns)], axis=1)
+
         # Filling missing odds.
         df = fill_odds(data_df=df, target_odds=['BWH', 'BWD', 'BWA'], fallback_odds=['B365H', 'B365D', 'B365A'])
         df = fill_odds(data_df=df, target_odds=['AvgH', 'AvgD', 'AvgA'], fallback_odds=['BWH', 'BWD', 'BWA'])

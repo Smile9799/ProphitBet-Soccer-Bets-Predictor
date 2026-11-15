@@ -26,6 +26,29 @@ MIN_SETTLED_FOR_LIVE_RANKING = 30
 # A fixture is matched to a played match of the same teams within this many days (postponements, time zones).
 MATCH_DATE_TOLERANCE_DAYS = 3
 
+def asian_handicap_return(line: float, goal_difference: float, pick: str, odd: Optional[float]) -> float:
+    """ Return (profit per unit stake) of an Asian handicap bet. The line is the home team's handicap and the goal
+        difference is home - away goals. Quarter lines (e.g. -0.75) split the stake over the two nearest half lines,
+        so they can be half won / half lost; whole lines can push (stake returned). Without odds, a win counts 1.
+
+        Args
+        ----
+        :param line: (float) home team's handicap.
+        :param goal_difference: (float) home goals - away goals.
+        :param pick: (str) "H" (home side) or "A" (away side).
+        :param odd: (float | None) decimal odd of the picked side.
+    """
+
+    win = (odd - 1.0) if odd else 1.0
+    quarter = abs(line*4) % 2 == 1
+    lines = [line - 0.25, line + 0.25] if quarter else [line]
+    total = 0.0
+    for part in lines:
+        margin = goal_difference + part if pick == 'H' else -(goal_difference + part)
+        total += win if margin > 0 else (0.0 if margin == 0 else -1.0)
+    return total/len(lines)
+
+
 # Double chance predictions (derived from Result models) are settled from the full-time result.
 DOUBLE_CHANCE_OUTCOMES = {'1X': ('H', 'D'), '12': ('H', 'A'), 'X2': ('D', 'A')}
 
@@ -35,6 +58,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     league_id TEXT NOT NULL,
     match_date TEXT NOT NULL,
     kickoff_time TEXT,
+    line REAL,
     home TEXT NOT NULL,
     away TEXT NOT NULL,
     market TEXT NOT NULL,
@@ -88,6 +112,8 @@ class PredictionLedger:
             columns = {row['name'] for row in connection.execute('PRAGMA table_info(predictions)')}
             if 'kickoff_time' not in columns:
                 connection.execute('ALTER TABLE predictions ADD COLUMN kickoff_time TEXT')
+            if 'line' not in columns:
+                connection.execute('ALTER TABLE predictions ADD COLUMN line REAL')
 
             # Upgrading ledgers whose predictions were unique per model only: a Result model also stores double
             # chance predictions, so the market is part of a prediction's identity.
@@ -134,7 +160,7 @@ class PredictionLedger:
             }
             kickoff_time = row.get('Time')
             rows.append((
-                row['League'], str(row['Date']), None if pd.isna(kickoff_time) else str(kickoff_time),
+                row['League'], str(row['Date']), None if pd.isna(kickoff_time) else str(kickoff_time), _float(row.get('Line')),
                 row['Home'], row['Away'], row['Market'], row['Model'],
                 str(row['Prediction']), _float(row.get('Confidence')), json.dumps(probabilities),
                 _float(row.get('1')), _float(row.get('X')), _float(row.get('2')),
@@ -149,12 +175,12 @@ class PredictionLedger:
         with closing(self._connect()) as connection, connection:
             connection.executemany("""
                 INSERT INTO predictions (
-                    league_id, match_date, kickoff_time, home, away, market, model_id, prediction, confidence,
+                    league_id, match_date, kickoff_time, line, home, away, market, model_id, prediction, confidence,
                     probabilities, odd_1, odd_x, odd_2, odd_over25, odd_under25, odd, ev, holdout_log_loss,
                     skill_vs_bookmaker, inputs, source, predicted_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (league_id, match_date, home, away, model_id, market) DO UPDATE SET
-                    kickoff_time = COALESCE(excluded.kickoff_time, predictions.kickoff_time), market = excluded.market, prediction = excluded.prediction, confidence = excluded.confidence,
+                    kickoff_time = COALESCE(excluded.kickoff_time, predictions.kickoff_time), line = excluded.line, prediction = excluded.prediction, confidence = excluded.confidence,
                     probabilities = excluded.probabilities, odd_1 = excluded.odd_1, odd_x = excluded.odd_x,
                     odd_2 = excluded.odd_2, odd_over25 = excluded.odd_over25, odd_under25 = excluded.odd_under25,
                     odd = excluded.odd, ev = excluded.ev, holdout_log_loss = excluded.holdout_log_loss,
@@ -214,6 +240,26 @@ class PredictionLedger:
 
             match = candidates.loc[distances.idxmin()]
             probabilities = json.loads(prediction['probabilities'])
+
+            if prediction['market'] == 'AH-Main':
+                # Settled at the line of the prediction (the stored historical line may be the closing one).
+                line = _float(prediction['line'])
+                if line is None:
+                    continue
+                goal_difference = float(match['HG']) - float(match['AG'])
+                outcome = asian_handicap_return(line=line, goal_difference=goal_difference, pick=prediction['prediction'], odd=None)
+                actual = 'H' if goal_difference + line > 0 else ('A' if goal_difference + line < 0 else 'P')
+                odd = _float(prediction['odd'])
+                profit = None if odd is None else asian_handicap_return(line, goal_difference, prediction['prediction'], odd)
+                pick_probability = min(max(float(probabilities.get(prediction['prediction'], 0.0)), 1e-15), 1.0 - 1e-15)
+                if outcome > 0:
+                    correct, log_loss = 1, -math.log(pick_probability)
+                elif outcome < 0:
+                    correct, log_loss = 0, -math.log(1.0 - pick_probability)
+                else:
+                    correct, log_loss = None, None  # Push: stake returned, not scored.
+                updates.append((actual, correct, log_loss, profit, now, int(prediction['id'])))
+                continue
 
             if prediction['market'] == 'Double-Chance':
                 # Overlapping options: the log loss scores the picked option (binary).

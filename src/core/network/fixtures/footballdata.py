@@ -27,6 +27,9 @@ _ODDS_PREFERENCE = {
     '2': ['AvgA', 'PSA', 'B365A', 'MaxA'],
     'Over 2.5': ['Avg>2.5', 'P>2.5', 'B365>2.5', 'Max>2.5'],
     'Under 2.5': ['Avg<2.5', 'P<2.5', 'B365<2.5', 'Max<2.5'],
+    'AH Line': ['AHh'],
+    'AH Home': ['AvgAHH', 'PAHH', 'B365AHH', 'MaxAHH'],
+    'AH Away': ['AvgAHA', 'PAHA', 'B365AHA', 'MaxAHA'],
 }
 
 
@@ -64,7 +67,7 @@ class FootballDataFixtures:
 
     def get_fixtures(self, league) -> pd.DataFrame:
         """ Returns the league's upcoming fixtures with columns: Date (YYYY-MM-DD), Time (HH:MM), Home, Away, 1, X, 2,
-            Over 2.5, Under 2.5 (missing odds are NaN). Date and Time are the kickoff in SAST (a missing kickoff time
+            Over 2.5, Under 2.5, AH Line (home team's main Asian handicap), AH Home, AH Away (missing values are NaN). Date and Time are the kickoff in SAST (a missing kickoff time
             keeps the published date). Returns an empty dataframe if the league is not covered.
 
             Args
@@ -72,7 +75,7 @@ class FootballDataFixtures:
             :param league: (League) league entity (from leagues.json).
         """
 
-        columns = ['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']
+        columns = ['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'AH Line', 'AH Home', 'AH Away']
 
         if league.category == 'main':
             df = self._download(MAIN_FIXTURES_URL)

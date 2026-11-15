@@ -522,8 +522,18 @@ Besides **Result** (1X2) and **Result-U/O** (Under/Over 2.5), models can be trai
 | `Away-U/O-0.5`, `Away-U/O-1.5` | U / O | Away team total goals | All |
 | `HT-Result` | H / D / A | Half-time result | Main leagues (half-time scores) |
 | `Home-Win-Either-Half`, `Away-Win-Either-Half` | N / Y | Team wins at least one of the two halves | Main leagues (half-time scores) |
+| `Corners-U/O-7.5` … `Corners-U/O-11.5` | U / O | Total corners | Main leagues |
+| `Cards-U/O-2.5` … `Cards-U/O-5.5` | U / O | Total cards (yellow 1, red 2) | Main leagues |
+| `AH-Main` | H / A | Side covering the bookmaker's main Asian handicap line (e.g. Eibar +0.5 / Cadiz -0.5) | Main leagues |
+| Double chance (1X / 12 / X2) | – | Derived from every Result model's probabilities (predictions & dashboard) | All |
 
 Half-time markets require half-time scores, which football-data.co.uk provides for the "main" leagues only.
+Corners, cards and the Asian handicap line are also main-league data; some leagues lack corners/cards in early
+seasons, so those matches are only excluded from the corner/card markets (not from the others). Corner and card models
+use extra corner/card form inputs, and the Asian handicap model uses the line itself (from football-data.co.uk
+fixtures for upcoming matches). Asian handicap predictions settle with half wins/losses on quarter lines and pushes on
+whole lines. With the current inputs, corner/card/Asian handicap models do not beat the league base rates on hold-out
+matches; check their live track record before relying on them.
 Leagues created before these markets existed are re-downloaded automatically on their next update.
 Outcome columns are never used as model inputs, so existing models keep working unchanged.
 

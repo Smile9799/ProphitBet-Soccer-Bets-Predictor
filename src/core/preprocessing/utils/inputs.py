@@ -19,11 +19,14 @@ def construct_inputs_by_match(league_df: pd.DataFrame, match_df: pd.Series) -> O
     if rows.shape[0] == 0:
         return None
 
-    row = rows.iloc[0]
+    row = rows.iloc[0].copy()
     row[['1', 'X', '2']] = [odd_1, odd_x, odd_2]
 
-    # Validating selected row.
-    if row.isna().any():
+    # Validating selected row (optional market data, e.g. corners, may be missing).
+    from src.core.preprocessing.utils.targets import TargetType
+
+    optional = set(TargetType.optional_columns())
+    if row[[column for column in row.index if column not in optional]].isna().any():
         raise ValueError('Found missing values in rows. Remove missing values before calling this method.')
 
     return row
@@ -101,18 +104,24 @@ def construct_inputs_by_form(league_df: pd.DataFrame, matches_df: pd.DataFrame, 
     """
 
     from src.core.preprocessing.statistics import StatisticsEngine
-    from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
+    from src.core.preprocessing.utils.targets import (
+        ASIAN_HANDICAP_LINE, ASIAN_HANDICAP_ODDS, HALF_TIME_COLUMNS, MARKET_STATS, OPTIONAL_RAW_COLUMNS, TargetType
+    )
 
     stats_columns = [column for column in league_config.stats_columns if column in league_df.columns]
-    raw_columns = [column for column in league_df.columns if column not in stats_columns]
+    raw_columns = [column for column in league_df.columns if column not in stats_columns and column not in MARKET_STATS]
     season, week = latest_season_and_week(league_df=league_df)
 
     # Statistics are computed per season, so only the current season's played matches are required.
     history_df = league_df.loc[league_df['Season'] == season, raw_columns].iloc[::-1]
     history_df = history_df.sort_values(by='Date', ascending=True, kind='stable')
 
+    # Outcomes of upcoming matches are unknown: placeholders (statistics only use previous matches, so they are unused).
     outcome_placeholders = {'HG': 0, 'AG': 0, **{column: 0 for column in HALF_TIME_COLUMNS}}
+    outcome_placeholders.update({column: 0 for column in OPTIONAL_RAW_COLUMNS})
     outcome_placeholders.update({target.value: next(iter(target.get_mapper())) for target in TargetType})
+    # Pre-match Asian handicap line & odds of the fixture (inputs of the Asian handicap market).
+    fixture_values = {ASIAN_HANDICAP_LINE: 'AH Line', ASIAN_HANDICAP_ODDS[0]: 'AH Home', ASIAN_HANDICAP_ODDS[1]: 'AH Away'}
 
     rows = []
     for match_date, date_matches in matches_df.groupby('Date', sort=True):
@@ -128,16 +137,25 @@ def construct_inputs_by_form(league_df: pd.DataFrame, matches_df: pd.DataFrame, 
         for column, value in outcome_placeholders.items():
             if column in upcoming_df.columns:
                 upcoming_df[column] = value
+        for column, fixture_column in fixture_values.items():
+            if column in upcoming_df.columns:
+                upcoming_df[column] = (
+                    pd.to_numeric(date_matches[fixture_column], errors='coerce').to_numpy()
+                    if fixture_column in date_matches.columns else float('nan')
+                )
 
         combined_df = pd.concat(
             [history_df[history_df['Date'] < match_date], upcoming_df], axis=0, ignore_index=True
         ).astype(history_df.dtypes.to_dict())
 
-        stats_df = StatisticsEngine(
+        engine = StatisticsEngine(
             match_history_window=league_config.match_history_window,
             goal_diff_margin=league_config.goal_diff_margin,
             aggregation=league_config.aggregation
-        ).compute_stats(df=combined_df, stats_columns=stats_columns)
+        )
+        stats_df = engine.compute_stats(df=combined_df, stats_columns=stats_columns)
+        if any(column in league_df.columns for column in MARKET_STATS):
+            stats_df = engine.compute_market_stats(df=stats_df)
 
         date_rows = stats_df.iloc[-date_matches.shape[0]:]
         date_rows.index = date_matches.index

@@ -188,7 +188,9 @@ class Classifier(ABC):
             raise RuntimeError('Classifier has not been built/fit yet.')
 
         # Extracting inputs, targets.
-        x, _ = self._dataset_preprocessor.construct_inputs(df=df, normalizer=self._model_config['normalizer'])
+        x, _ = self._dataset_preprocessor.construct_inputs(
+            df=df, normalizer=self._model_config['normalizer'], target_type=self._model_config['target_type']
+        )
         y_pred = self._classifier.predict(x)
         return y_pred
 
@@ -204,7 +206,9 @@ class Classifier(ABC):
             raise RuntimeError('Classifier has not been built/fit yet.')
 
         # Extracting inputs, targets.
-        x, _ = self._dataset_preprocessor.construct_inputs(df=df, normalizer=self._model_config['normalizer'])
+        x, _ = self._dataset_preprocessor.construct_inputs(
+            df=df, normalizer=self._model_config['normalizer'], target_type=self._model_config['target_type']
+        )
         y_pred = self._classifier.predict_proba(x)
         return y_pred
 

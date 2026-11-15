@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from abc import ABC, abstractmethod
 from src.core.leagues.league import LeagueConfig
-from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType, compute_target_columns
+from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, OPTIONAL_RAW_COLUMNS, TargetType, compute_target_columns
 
 
 class LeagueDownloader(ABC):
@@ -78,6 +78,13 @@ class LeagueDownloader(ABC):
                 df = df[~missing_half_time]
                 has_half_time = True
 
+        # 1c. Keeping optional data (corners, cards, Asian handicap) when provided. Missing values are allowed: such
+        #     matches are only excluded from the markets that need the data.
+        optional_columns = [column for column in OPTIONAL_RAW_COLUMNS if column in df.columns]
+        if optional_columns:
+            df[optional_columns] = df[optional_columns].apply(pd.to_numeric, errors='coerce')
+            optional_columns = [column for column in optional_columns if df[column].notna().any()]
+
         # 2. Removing non-ASCII characters.
         def remove_non_ascii(x: str) -> str:
             """ Removes non-ascii characters. """
@@ -151,6 +158,7 @@ class LeagueDownloader(ABC):
             df[HALF_TIME_COLUMNS] = df[HALF_TIME_COLUMNS].astype(int)
         uo_index = relevant_columns.index('Result-U/O')
         relevant_columns[uo_index + 1: uo_index + 1] = market_df.columns.tolist()
+        relevant_columns += optional_columns
 
         df = df[relevant_columns]
         return df

@@ -65,8 +65,10 @@ def create_agent(
 
     report = {'league_id': league_id, 'agent_id': agent_id}
 
-    # Dropping missing rows.
-    valid_df = df.dropna()
+    # Dropping matches with missing values (optional market data does not matter for agents).
+    from src.core.preprocessing.dataset import drop_incomplete
+
+    valid_df = drop_incomplete(df)
 
     # Computing max weekly matches.
     max_matches = compute_max_weekly_matches(df=valid_df)

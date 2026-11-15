@@ -54,6 +54,7 @@
   .badge.lost { background: var(--bad-soft); color: var(--bad); }
   .badge.upcoming { background: var(--accent-soft); color: var(--accent); }
   .badge.awaiting { background: var(--warn-soft); color: var(--warn); }
+  .badge.push { background: var(--panel-2); color: var(--muted); }
   .star { color: var(--star); }
   .pick { font-weight: 700; }
   .bar { display: inline-block; width: 70px; height: 6px; background: var(--panel-2); border-radius: 3px; vertical-align: middle; margin-right: 6px; overflow: hidden; }
@@ -108,18 +109,28 @@
 const state = { tab: 'predictions', leagues: [], models: [], predictions: [], sort: {}, filters: {
   view: 'matches', status: 'upcoming', league: '', market: '', preferredOnly: true, valueOnly: false, minConfidence: 0, search: '', allModels: false
 }};
-const MARKET_ORDER = ['Result', 'Double-Chance', 'Result-U/O', 'BTTS', 'U/O-1.5', 'U/O-3.5', 'HT-Result', 'Home-Win-Either-Half', 'Away-Win-Either-Half',
-  'Home-U/O-0.5', 'Home-U/O-1.5', 'Away-U/O-0.5', 'Away-U/O-1.5'];
+const MARKET_ORDER = ['Result', 'Double-Chance', 'AH-Main', 'Result-U/O', 'BTTS', 'U/O-1.5', 'U/O-3.5', 'HT-Result', 'Home-Win-Either-Half', 'Away-Win-Either-Half',
+  'Home-U/O-0.5', 'Home-U/O-1.5', 'Away-U/O-0.5', 'Away-U/O-1.5',
+  'Corners-U/O-7.5', 'Corners-U/O-8.5', 'Corners-U/O-9.5', 'Corners-U/O-10.5', 'Corners-U/O-11.5',
+  'Cards-U/O-2.5', 'Cards-U/O-3.5', 'Cards-U/O-4.5', 'Cards-U/O-5.5'];
 const SHORT_MARKET = { 'Result': '1X2', 'Double-Chance': 'DC', 'Result-U/O': 'O/U 2.5', 'BTTS': 'BTTS', 'U/O-1.5': 'O/U 1.5', 'U/O-3.5': 'O/U 3.5', 'HT-Result': 'HT 1X2',
   'Home-Win-Either-Half': 'Home wins a half', 'Away-Win-Either-Half': 'Away wins a half', 'Home-U/O-0.5': 'Home O/U 0.5',
-  'Home-U/O-1.5': 'Home O/U 1.5', 'Away-U/O-0.5': 'Away O/U 0.5', 'Away-U/O-1.5': 'Away O/U 1.5' };
+  'Home-U/O-1.5': 'Home O/U 1.5', 'Away-U/O-0.5': 'Away O/U 0.5', 'Away-U/O-1.5': 'Away O/U 1.5', 'AH-Main': 'AH',
+  ...Object.fromEntries([7.5, 8.5, 9.5, 10.5, 11.5].map((l) => [`Corners-U/O-${l}`, `Corners O/U ${l}`])),
+  ...Object.fromEntries([2.5, 3.5, 4.5, 5.5].map((l) => [`Cards-U/O-${l}`, `Cards O/U ${l}`])) };
+const isSettled = (p) => p.status === 'won' || p.status === 'lost' || p.status === 'push';
+const signedLine = (x) => x > 0 ? `+${x}` : `${x}`;
+// The pick as a bettor reads it: Asian handicap picks show the team and its line (e.g. "Eibar +0.5").
+const pickLabel = (p) => p.market === 'AH-Main' && p.line != null
+  ? (p.prediction === 'H' ? `${p.home} ${signedLine(p.line)}` : `${p.away} ${signedLine(-p.line)}`)
+  : p.prediction;
 const $ = (selector) => document.querySelector(selector);
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const pct = (value, digits = 1) => value == null ? '–' : (100 * value).toFixed(digits) + '%';
 const num = (value, digits = 3) => value == null ? '–' : Number(value).toFixed(digits);
 const signed = (value, digits = 2) => value == null ? '–' : `<span class="${value > 0 ? 'pos' : value < 0 ? 'neg' : ''}">${value > 0 ? '+' : ''}${Number(value).toFixed(digits)}</span>`;
 const leagueName = (id) => { const l = state.leagues.find((x) => x.league_id === id); return l ? `${l.country} · ${l.name.replace(/-/g, ' ')}` : id; };
-const marketLabel = (m) => m === 'Result-U/O' ? 'U/O 2.5' : m;
+const marketLabel = (m) => (typeof SHORT_MARKET !== 'undefined' && SHORT_MARKET[m]) || m;
 // Kickoff in SAST (time unknown for FootyStats-only fixtures).
 const kickoff = (p) => `${esc(p.match_date)} <span class="${p.kickoff_time ? '' : 'muted'}">${esc(p.kickoff_time || '–')}</span>`;
 const kickoffSort = (p) => `${p.match_date} ${p.kickoff_time || '99:99'}`;
@@ -162,7 +173,7 @@ function table(id, columns, rows, emptyText) {
     });
   }
   const head = columns.map((c) => `<th class="${c.num ? 'num' : ''}${c.hideNarrow ? ' narrow-hide' : ''}${c.hideNarrower ? ' narrower-hide' : ''}" data-table="${id}" data-key="${c.key}">${c.label}${sort && sort.key === c.key ? ` <span class="arrow">${sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
-  const body = rows.map((row) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''}${c.key === 'league_id' || c.key === 'probabilities' || c.key === 'picks' || c.key === 'home' ? ' wrap' : ''}${c.hideNarrow ? ' narrow-hide' : ''}${c.hideNarrower ? ' narrower-hide' : ''}">${c.render ? c.render(row) : esc(row[c.key])}</td>`).join('')}</tr>`).join('');
+  const body = rows.map((row) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''}${['league_id', 'probabilities', 'picks', 'home', 'market', 'prediction'].includes(c.key) ? ' wrap' : ''}${c.hideNarrow ? ' narrow-hide' : ''}${c.hideNarrower ? ' narrower-hide' : ''}">${c.render ? c.render(row) : esc(row[c.key])}</td>`).join('')}</tr>`).join('');
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -186,7 +197,7 @@ const shortModel = (id) => { const kind = /LightGBM/.test(id) ? 'LightGBM' : /Lo
 function renderPredictions() {
   const f = state.filters;
   let rows = state.predictions.filter((p) =>
-    (f.status === 'all' || p.status === f.status || (f.status === 'settled' && (p.status === 'won' || p.status === 'lost'))) &&
+    (f.status === 'all' || p.status === f.status || (f.status === 'settled' && isSettled(p))) &&
     (!f.league || p.league_id === f.league) && (!f.market || p.market === f.market) &&
     (!f.preferredOnly || p.preferred) && (p.confidence ?? 0) >= f.minConfidence &&
     (!f.valueOnly || (p.ev > 0 && p.skill_vs_bookmaker > 0)) &&
@@ -198,14 +209,14 @@ function renderPredictions() {
     { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
     { key: 'home', label: 'Match', render: (p) => `<span class="match">${esc(p.home)}</span> <span class="muted">vs</span> <span class="match">${esc(p.away)}</span>` },
     { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
-    { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span>` },
+    { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(pickLabel(p))}</span>` },
     { key: 'confidence', label: 'Confidence', num: true, render: (p) => `<span class="bar"><span style="width:${(p.confidence || 0) * 100}%"></span></span>${pct(p.confidence)}` },
     { key: 'probabilities', label: 'Probabilities', hideNarrower: true, sortValue: (p) => p.confidence, render: (p) => `<span class="muted">${Object.entries(p.probabilities).map(([k, v]) => `${esc(k)}&nbsp;${pct(v, 0)}`).join(' · ')}</span>` },
     { key: 'odd', label: 'Odd', num: true, render: (p) => num(p.odd, 2) },
     { key: 'ev', label: 'EV', num: true, render: (p) => p.ev == null ? '–' : signed(p.ev) + (p.ev > 0 && !(p.skill_vs_bookmaker > 0) ? ' <span class="muted" title="Model does not beat the bookmaker on its hold-out matches">?</span>' : '') },
     { key: 'model_id', label: 'Model', render: (p) => `${p.preferred ? '<span class="star" title="Preferred model">★</span> ' : ''}${shortModel(p.model_id)}` },
-    { key: 'status', label: 'Result', render: (p) => p.status === 'won' || p.status === 'lost'
-        ? `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>`
+    { key: 'status', label: 'Result', render: (p) => isSettled(p)
+        ? `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : p.status === 'push' ? '= push' : '✗'} ${esc(p.actual)}</span>`
         : `<span class="badge ${p.status === 'upcoming' ? 'upcoming' : 'awaiting'}">${esc(p.status)}</span>` },
   ];
 
@@ -221,10 +232,10 @@ function renderPredictions() {
     const matchRows = Object.values(matches);
     if (!state.sort.matches) state.sort.matches = { key: 'match_date', dir: 1 };
     const chip = (m, p) => {
-      const settled = p.status === 'won' || p.status === 'lost' ? ` ${p.status}` : '';
+      const settled = p.status === 'won' || p.status === 'lost' ? ` ${p.status}` : '';  // pushes stay neutral
       const value = p.ev > 0 && p.skill_vs_bookmaker > 0;
       const title = `${SHORT_MARKET[m] || m} · ${p.model_id} · ${Object.entries(p.probabilities).map(([k, v]) => `${k} ${pct(v, 0)}`).join(' · ')}${p.odd ? ` · odd ${num(p.odd, 2)} · EV ${num(p.ev, 2)}` : ''}${value ? ' · value bet' : ''}${settled ? ` · actual ${p.actual}` : ''}`;
-      return `<span class="chip${settled}${value ? ' value' : ''}" title="${esc(title)}"><span class="k">${esc(SHORT_MARKET[m] || m)}</span><b>${esc(p.prediction)}</b>${pct(p.confidence, 0)}${value ? ' <span class="pos">value</span>' : ''}</span>`;
+      return `<span class="chip${settled}${value ? ' value' : ''}" title="${esc(title)}"><span class="k">${esc(SHORT_MARKET[m] || m)}</span><b>${esc(pickLabel(p))}</b>${pct(p.confidence, 0)}${value ? ' <span class="pos">value</span>' : ''}</span>`;
     };
     content = table('matches', [
       { key: 'match_date', label: 'Kickoff (SAST)', sortValue: kickoffSort, render: kickoff },
@@ -265,13 +276,14 @@ function renderPredictions() {
 
 // ---------- Track record ----------
 function summarize(rows) {
-  const settled = rows.filter((p) => p.status === 'won' || p.status === 'lost');
+  const settled = rows.filter(isSettled);
+  const decided = settled.filter((p) => p.status !== 'push');  // pushes: stake returned, not scored
   const bets = settled.filter((p) => p.profit != null);
   const profit = bets.reduce((s, p) => s + p.profit, 0);
   return {
     settled: settled.length,
-    accuracy: settled.length ? settled.filter((p) => p.correct === 1).length / settled.length : null,
-    logLoss: settled.length ? settled.reduce((s, p) => s + p.log_loss, 0) / settled.length : null,
+    accuracy: decided.length ? decided.filter((p) => p.correct === 1).length / decided.length : null,
+    logLoss: decided.length ? decided.reduce((s, p) => s + p.log_loss, 0) / decided.length : null,
     bets: bets.length, profit: bets.length ? profit : null, roi: bets.length ? profit / bets.length : null,
   };
 }
@@ -286,7 +298,7 @@ function renderRecord() {
     const [league_id, market] = key.split('|');
     return { league_id, market, ...summarize(rows), pending: rows.filter((p) => p.status === 'upcoming' || p.status === 'awaiting result').length };
   }).filter((r) => r.settled > 0 || r.pending > 0);
-  const recent = scope.filter((p) => p.status === 'won' || p.status === 'lost').sort((a, b) => b.match_date.localeCompare(a.match_date)).slice(0, 60);
+  const recent = scope.filter(isSettled).sort((a, b) => b.match_date.localeCompare(a.match_date)).slice(0, 60);
 
   const card = (label, value) => `<div class="card"><div class="label">${label}</div><div class="value">${value}</div></div>`;
   return `
@@ -317,8 +329,8 @@ function renderRecord() {
       { key: 'league_id', label: 'League', render: (p) => esc(leagueName(p.league_id)) },
       { key: 'home', label: 'Match', render: (p) => `${esc(p.home)} <span class="muted">vs</span> ${esc(p.away)}` },
       { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
-      { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span>` },
-      { key: 'actual', label: 'Actual', render: (p) => `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>` },
+      { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(pickLabel(p))}</span> <span class="muted">${pct(p.confidence, 0)}</span>` },
+      { key: 'actual', label: 'Actual', render: (p) => `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : p.status === 'push' ? '=' : '✗'} ${esc(p.actual)}</span>` },
       { key: 'profit', label: 'Profit', num: true, render: (p) => p.profit == null ? '–' : signed(p.profit) },
       { key: 'model_id', label: 'Model', render: (p) => shortModel(p.model_id) },
     ], recent, 'Nothing settled yet: results of stored predictions arrive with the next refresh.')}`;

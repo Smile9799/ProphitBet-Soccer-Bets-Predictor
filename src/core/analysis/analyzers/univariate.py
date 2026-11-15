@@ -206,7 +206,7 @@ class UnivariateAnalyzer(Analyzer):
         variable_issues = self._find_variable_issues(statistics=descriptive_statistics)
 
         # Including numerical metadata in the analysis.
-        meta_cols = ['1X', '12', 'X2', 'HG', 'AG'] + [target.value for target in TargetType.available(metadata)]
+        meta_cols = ['1X', '12', 'X2', 'HG', 'AG'] + [target.value for target in TargetType.available(metadata, strict=True)]
         numerical_df = pd.concat([df, metadata[meta_cols]], axis=1)
 
         distributions = self._compute_distributions(df=numerical_df)

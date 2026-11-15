@@ -24,7 +24,7 @@ class RuleExtractionAnalyzer(Analyzer):
         x = valid_df.to_numpy(dtype=np.float32)
 
         rules_dict = {}
-        for target in TargetType.available(valid_metadata):
+        for target in TargetType.available(valid_metadata, strict=True):
             mapper = target.get_mapper()
             y = valid_metadata[target.value].map(mapper).to_numpy(dtype=np.int32)
             tree = DecisionTreeClassifier(criterion='gini', splitter='best', max_depth=5, random_state=0)

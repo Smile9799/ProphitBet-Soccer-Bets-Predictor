@@ -27,7 +27,7 @@ from src.core.preprocessing.utils.inputs import (
     latest_season_and_week,
     prepare_prediction_row,
 )
-from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, TargetType
+from src.core.preprocessing.utils.targets import HALF_TIME_COLUMNS, MARKET_STATS, OPTIONAL_RAW_COLUMNS, TargetType
 from src.gui.widgets import ExcelTable
 
 if TYPE_CHECKING:
@@ -48,7 +48,7 @@ class ManualPredictionDialog(QDialog):
     _DOUBLE_CHANCE_LABELS = ['1X', '12', 'X2']
     _METADATA_COLUMNS = {
         'Date', 'Season', 'Week', 'Home', 'Away', '1X', '12', 'X2',
-        'HG', 'AG', *HALF_TIME_COLUMNS, *TargetType.label_columns(),
+        'HG', 'AG', *HALF_TIME_COLUMNS, *OPTIONAL_RAW_COLUMNS, *MARKET_STATS, *TargetType.label_columns(),
     }
 
     def __init__(
@@ -64,7 +64,9 @@ class ManualPredictionDialog(QDialog):
         # With the league config, match inputs are computed from the teams' current form.
         self._league_config = league_config
         self._source_df = df
-        self._league_df = df.dropna(ignore_index=True)
+        from src.core.preprocessing.dataset import drop_incomplete
+
+        self._league_df = drop_incomplete(df, ignore_index=True)
         self._model_database = model_database
         self._agent_database = agent_database
         self._feature_columns = [

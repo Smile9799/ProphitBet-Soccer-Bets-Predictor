@@ -38,6 +38,7 @@ SAST = ZoneInfo('Africa/Johannesburg')
 MARKET_ODDS = {
     TargetType.RESULT: {'H': '1', 'D': 'X', 'A': '2'},
     TargetType.RESULT_UNDER_OVER: {'O': 'Over 2.5', 'U': 'Under 2.5'},
+    TargetType.ASIAN_HANDICAP: {'H': 'AH Home', 'A': 'AH Away'},
 }
 
 # Double chance is derived from Result models (like the GUI's "Switch to Double Chance").
@@ -46,8 +47,11 @@ DOUBLE_CHANCE_LABELS = ['1X', '12', 'X2']
 DOUBLE_CHANCE_OUTCOMES = {'1X': ('H', 'D'), '12': ('H', 'A'), 'X2': ('D', 'A')}
 # Date & Time are the kickoff in SAST (Time is only known for football-data.co.uk fixtures).
 FIXTURE_COLUMNS = [
-    'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Fixture Home', 'Fixture Away', 'Source'
+    'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'AH Line', 'AH Home', 'AH Away',
+    'Fixture Home', 'Fixture Away', 'Source'
 ]
+# Fixture odds/lines published by football-data.co.uk only (filled into FootyStats fixtures by team).
+FOOTBALL_DATA_ONLY_COLUMNS = ['Over 2.5', 'Under 2.5', 'AH Line', 'AH Home', 'AH Away']
 
 
 @dataclass(frozen=True)
@@ -162,7 +166,8 @@ class AutomationPipeline:
     # ------------------------------------------------------------------------------------------------------------
 
     def refresh(self, league_id: str, rebuild: bool = False) -> Tuple[pd.DataFrame, bool]:
-        """ Downloads the latest matches of a league. Returns the league data and whether it was rebuilt.
+        """ Downloads the latest matches of a league. Returns the league data and whether its statistics were
+            recomputed differently (then the saved models' inputs changed and they must be retrained).
             Leagues stored before new markets / statistics fixes were introduced are rebuilt automatically.
 
             Args
@@ -174,11 +179,15 @@ class AutomationPipeline:
         history_df = self._league_database.load_league(league_id=league_id)
         previous_rows = history_df.shape[0]
 
-        if not rebuild and self._league_database._requires_rebuild(
-                league_config=self._league_database.index[league_id],
-                history_df=history_df
-        ):
-            logger.info('[%s] League data predates new markets/statistics fixes: rebuilding it.', league_id)
+        # Saved models must be retrained only if the league's statistics (their inputs) are recomputed differently.
+        reason = self._league_database.rebuild_reason(
+            league_config=self._league_database.index[league_id],
+            history_df=history_df
+        )
+        inputs_changed = reason == 'statistics'
+        if not rebuild and reason is not None:
+            logger.info('[%s] League data predates new %s: rebuilding it.', league_id,
+                        'statistics fixes' if inputs_changed else 'markets')
             rebuild = True
 
         if rebuild:
@@ -193,7 +202,7 @@ class AutomationPipeline:
             '[%s] Matches: %d -> %d. Last match: %s. Markets: %s',
             league_id, previous_rows, df.shape[0], df['Date'].max(), markets
         )
-        return df, rebuild
+        return df, inputs_changed
 
     # ------------------------------------------------------------------------------------------------------------
     # Retrain
@@ -232,8 +241,10 @@ class AutomationPipeline:
             :param seed: (int) random seed.
         """
 
+        from src.core.preprocessing.dataset import drop_incomplete
+
         df = self._league_database.load_league(league_id=league_id)
-        valid_df = df.dropna().sort_values(by='Date', ascending=False).reset_index(drop=True)
+        league_df = df.sort_values(by='Date', ascending=False).reset_index(drop=True)
         model_database = ModelDatabase(league_id=league_id)
         selected_ids = model_ids or model_database.get_model_ids()
 
@@ -248,6 +259,8 @@ class AutomationPipeline:
                 old_model, old_config = model_database.load_model(model_id=model_id)
                 target_type = old_config.classifier_config['target_type']
                 target_value = target_type.value
+                # Matches with the core data and, for optional markets, the market's data.
+                valid_df = drop_incomplete(league_df, target_type=target_type, ignore_index=True)
 
                 if not target_type.is_available(valid_df):
                     results.append(RetrainResult(
@@ -390,7 +403,7 @@ class AutomationPipeline:
             football_data_df = self._football_data_fixtures_df(league=league, today=today, last_day=last_day)
         except Exception as error:
             logger.warning('[%s] football-data.co.uk fixtures failed (%s).', league_id, error)
-            football_data_df = pd.DataFrame(columns=['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5'])
+            football_data_df = pd.DataFrame(columns=['Date', 'Time', 'Home', 'Away', '1', 'X', '2', *FOOTBALL_DATA_ONLY_COLUMNS])
 
         # FootyStats team names are fuzzy-matched to the league's names (football-data.co.uk already uses them).
         footystats_df = footystats_df.dropna(subset=['Home', 'Away'])
@@ -411,12 +424,12 @@ class AutomationPipeline:
         if footystats_df.empty:
             fixtures_df = football_data_df
         elif football_data_df.empty:
-            fixtures_df = footystats_df.assign(**{'Time': np.nan, 'Over 2.5': np.nan, 'Under 2.5': np.nan})
+            fixtures_df = footystats_df.assign(**{column: np.nan for column in ['Time', *FOOTBALL_DATA_ONLY_COLUMNS]})
         else:
             # Filling missing FootyStats odds and adding U/O odds from football-data.co.uk (matched by teams).
             odds_df = football_data_df.drop_duplicates(subset=['Home', 'Away']).set_index(['Home', 'Away'])
             keys = pd.MultiIndex.from_frame(footystats_df[['Home', 'Away']])
-            for odd in ['1', 'X', '2', 'Over 2.5', 'Under 2.5']:
+            for odd in ['1', 'X', '2', *FOOTBALL_DATA_ONLY_COLUMNS]:
                 fallback = odds_df[odd].reindex(keys).to_numpy()
                 current = footystats_df[odd].to_numpy(dtype=float) if odd in footystats_df else np.full(len(keys), np.nan)
                 footystats_df[odd] = np.where(np.isnan(current), fallback, current)
@@ -458,7 +471,9 @@ class AutomationPipeline:
 
         league_config = self._league_database.index[league_id]
         source_df = self._league_database.load_league(league_id=league_id)
-        league_df = source_df.dropna(ignore_index=True)
+        from src.core.preprocessing.dataset import drop_incomplete
+
+        league_df = drop_incomplete(source_df, ignore_index=True)
         season, week = latest_season_and_week(league_df=source_df)
 
         skipped_rows = []
@@ -496,7 +511,12 @@ class AutomationPipeline:
                 })
                 continue
 
-            input_rows.append(prepare_prediction_row(row=last_meeting, match_date=match['Date'], season=season, week=week))
+            row = prepare_prediction_row(row=last_meeting, match_date=match['Date'], season=season, week=week)
+            # The Asian handicap line & odds are the upcoming fixture's, not the old match's.
+            for column, fixture_column in {'AHh': 'AH Line', 'AHOddH': 'AH Home', 'AHOddA': 'AH Away'}.items():
+                if column in row.index:
+                    row[column] = pd.to_numeric(match.get(fixture_column), errors='coerce')
+            input_rows.append(row)
             match_rows.append({**match.to_dict(), 'Inputs': 'Last meeting (early season)'})
 
         inputs_df = pd.DataFrame(input_rows).reset_index(drop=True)
@@ -543,13 +563,15 @@ class AutomationPipeline:
             for model_id in selected_ids:
                 try:
                     model, model_config = model_database.load_model(model_id=model_id)
-                    prediction_frames.append(self._predict_with_model(
+                    model_predictions = self._predict_with_model(
                         model=model,
                         model_id=model_id,
                         model_config=model_config,
                         inputs_df=inputs_df,
                         matches_df=matches_df
-                    ))
+                    )
+                    if not model_predictions.empty:
+                        prediction_frames.append(model_predictions)
                 except Exception:
                     logger.exception('[%s] Prediction with "%s" failed.', league_id, model_id)
 
@@ -568,7 +590,7 @@ class AutomationPipeline:
             ))
             leading_columns = [
                 'League', 'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
-                'Market', 'Model', 'Preferred', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss',
+                'Market', 'Line', 'Model', 'Preferred', 'Prediction', 'Confidence', 'Odd', 'EV', 'Holdout Log Loss',
                 'Skill vs Bookmaker'
             ]
             trailing_columns = ['Passes Filters', 'Inputs', 'Source', 'Fixture Home', 'Fixture Away']
@@ -591,6 +613,17 @@ class AutomationPipeline:
 
         target_type: TargetType = model_config.classifier_config['target_type']
         labels = np.asarray(list(target_type.get_mapper().keys()))
+
+        # Markets with extra inputs (corner/card form, Asian handicap line) only predict matches that have them.
+        extra_features = [column for column in target_type.extra_features if column in inputs_df.columns]
+        if len(extra_features) != len(target_type.extra_features):
+            return pd.DataFrame()
+        complete = inputs_df[extra_features].notna().all(axis=1).to_numpy() if extra_features else np.ones(len(inputs_df), bool)
+        if not complete.any():
+            return pd.DataFrame()
+        inputs_df = inputs_df[complete].reset_index(drop=True)
+        matches_df = matches_df[complete].reset_index(drop=True)
+
         probabilities = np.asarray(model.predict_proba(df=inputs_df), dtype=float)
         prediction_ids = np.argmax(probabilities, axis=1)
         predictions = labels[prediction_ids]
@@ -598,6 +631,8 @@ class AutomationPipeline:
 
         result_df = matches_df[['Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5']].copy()
         result_df['Market'] = target_type.value
+        # The handicap line (home team's) of Asian handicap predictions: "H" backs the home side at this line.
+        result_df['Line'] = matches_df['AH Line'] if target_type == TargetType.ASIAN_HANDICAP else np.nan
         result_df['Model'] = model_id
         result_df['Prediction'] = predictions
         result_df['Confidence'] = confidence.round(3)

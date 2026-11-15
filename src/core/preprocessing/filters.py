@@ -75,7 +75,9 @@ def filter_league_odds(
 
     # Validating processed dataframe.
     if validate_dataframe:
-        valid_df = filtered_df.dropna()
+        from src.core.preprocessing.dataset import drop_incomplete
+
+        valid_df = drop_incomplete(filtered_df)
 
         if valid_df.shape[0] == 0 or valid_df['Result'].nunique() < 3 or valid_df['Result-U/O'].nunique() < 2:
             return None
