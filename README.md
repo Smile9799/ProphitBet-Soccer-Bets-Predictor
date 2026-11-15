@@ -590,9 +590,13 @@ One-time setup with [MEGAcmd](https://mega.io/cmd) (Ubuntu 24.04 / Linux Mint 22
 ```bash
 wget https://mega.nz/linux/repo/xUbuntu_24.04/amd64/megacmd-xUbuntu_24.04_amd64.deb
 sudo apt install ./megacmd-xUbuntu_24.04_amd64.deb
-mega-login you@example.com          # prompts for the password; the session is remembered
+mega-cmd                            # interactive MEGAcmd shell, then at its prompt:
+#   login you@example.com            # asks for the password (and 2FA code); the session is remembered
+#   quit
 scripts/backup_to_mega.sh           # first backup
 ```
+(`mega-login` does not prompt for a password; avoid passing it on the command line, where it lands in the shell
+history.)
 
 Restore the latest backup (current data is first moved to `storage/pre-restore-<timestamp>/`) with
 `scripts/restore_from_mega.sh`, or a specific one with `scripts/restore_from_mega.sh prophitbet-<date>-<time>.tar.gz`.

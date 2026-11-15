@@ -3,7 +3,7 @@
 #
 # Usage:   scripts/backup_to_mega.sh
 # Requires one of:
-#   * MEGAcmd (https://mega.io/cmd), logged in once with:  mega-login <email>
+#   * MEGAcmd (https://mega.io/cmd), logged in once via the interactive shell: mega-cmd, then: login <email>
 #   * rclone with a MEGA remote named "mega" (rclone config)
 #
 # Environment:
@@ -30,7 +30,7 @@ if command -v mega-put >/dev/null 2>&1 && mega-whoami >/dev/null 2>&1; then
 elif command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep -qx "${RCLONE_REMOTE}:"; then
     TOOL=rclone
 else
-    log "ERROR Backup skipped: install MEGAcmd and run 'mega-login <email>' (or configure an rclone remote '${RCLONE_REMOTE}')."
+    log "ERROR Backup skipped: install MEGAcmd and log in once via 'mega-cmd' then 'login <email>' (or configure an rclone remote '${RCLONE_REMOTE}')."
     exit 2
 fi
 

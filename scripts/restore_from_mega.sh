@@ -19,7 +19,7 @@ elif command -v rclone >/dev/null 2>&1 && rclone listremotes 2>/dev/null | grep 
     TOOL=rclone
     list() { rclone lsf "${RCLONE_REMOTE}:${REMOTE_DIR#/}"; }
 else
-    echo "Install MEGAcmd and run 'mega-login <email>' (or configure an rclone remote '${RCLONE_REMOTE}')." >&2
+    echo "Install MEGAcmd and log in once via 'mega-cmd' then 'login <email>' (or configure an rclone remote '${RCLONE_REMOTE}')." >&2
     exit 2
 fi
 
