@@ -26,6 +26,9 @@ MIN_SETTLED_FOR_LIVE_RANKING = 30
 # A fixture is matched to a played match of the same teams within this many days (postponements, time zones).
 MATCH_DATE_TOLERANCE_DAYS = 3
 
+# Double chance predictions (derived from Result models) are settled from the full-time result.
+DOUBLE_CHANCE_OUTCOMES = {'1X': ('H', 'D'), '12': ('H', 'A'), 'X2': ('D', 'A')}
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     log_loss REAL,
     profit REAL,
     settled_at TEXT,
-    UNIQUE (league_id, match_date, home, away, model_id)
+    UNIQUE (league_id, match_date, home, away, model_id, market)
 );
 CREATE INDEX IF NOT EXISTS idx_predictions_league ON predictions (league_id, settled_at);
 """
@@ -85,6 +88,20 @@ class PredictionLedger:
             columns = {row['name'] for row in connection.execute('PRAGMA table_info(predictions)')}
             if 'kickoff_time' not in columns:
                 connection.execute('ALTER TABLE predictions ADD COLUMN kickoff_time TEXT')
+
+            # Upgrading ledgers whose predictions were unique per model only: a Result model also stores double
+            # chance predictions, so the market is part of a prediction's identity.
+            table_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'predictions'"
+            ).fetchone()['sql']
+            if 'model_id, market)' not in table_sql:
+                columns = [row['name'] for row in connection.execute('PRAGMA table_info(predictions)')]
+                connection.execute('DROP INDEX IF EXISTS idx_predictions_league')
+                connection.execute('ALTER TABLE predictions RENAME TO predictions_old')
+                connection.executescript(_SCHEMA)
+                column_list = ', '.join(columns)
+                connection.execute(f'INSERT INTO predictions ({column_list}) SELECT {column_list} FROM predictions_old')
+                connection.execute('DROP TABLE predictions_old')
 
         # Importing predictions exported before the ledger existed.
         if is_new:
@@ -136,7 +153,7 @@ class PredictionLedger:
                     probabilities, odd_1, odd_x, odd_2, odd_over25, odd_under25, odd, ev, holdout_log_loss,
                     skill_vs_bookmaker, inputs, source, predicted_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT (league_id, match_date, home, away, model_id) DO UPDATE SET
+                ON CONFLICT (league_id, match_date, home, away, model_id, market) DO UPDATE SET
                     kickoff_time = COALESCE(excluded.kickoff_time, predictions.kickoff_time), market = excluded.market, prediction = excluded.prediction, confidence = excluded.confidence,
                     probabilities = excluded.probabilities, odd_1 = excluded.odd_1, odd_x = excluded.odd_x,
                     odd_2 = excluded.odd_2, odd_over25 = excluded.odd_over25, odd_under25 = excluded.odd_under25,
@@ -196,16 +213,26 @@ class PredictionLedger:
                 continue
 
             match = candidates.loc[distances.idxmin()]
-            if prediction['market'] not in match.index or pd.isna(match[prediction['market']]):
-                continue
-
-            actual = str(match[prediction['market']])
-            correct = int(actual == prediction['prediction'])
             probabilities = json.loads(prediction['probabilities'])
-            probability = min(max(float(probabilities.get(actual, 0.0)), 1e-15), 1.0)
+
+            if prediction['market'] == 'Double-Chance':
+                # Overlapping options: the log loss scores the picked option (binary).
+                if pd.isna(match.get('Result')) or prediction['prediction'] not in DOUBLE_CHANCE_OUTCOMES:
+                    continue
+                actual = str(match['Result'])
+                correct = int(actual in DOUBLE_CHANCE_OUTCOMES[prediction['prediction']])
+                pick_probability = min(max(float(probabilities.get(prediction['prediction'], 0.0)), 1e-15), 1.0 - 1e-15)
+                log_loss = -math.log(pick_probability if correct else 1.0 - pick_probability)
+            else:
+                if prediction['market'] not in match.index or pd.isna(match[prediction['market']]):
+                    continue
+                actual = str(match[prediction['market']])
+                correct = int(actual == prediction['prediction'])
+                log_loss = -math.log(min(max(float(probabilities.get(actual, 0.0)), 1e-15), 1.0))
+
             odd = _float(prediction['odd'])
             profit = None if odd is None else (odd - 1.0 if correct else -1.0)
-            updates.append((actual, correct, -math.log(probability), profit, now, int(prediction['id'])))
+            updates.append((actual, correct, log_loss, profit, now, int(prediction['id'])))
 
         if updates:
             with closing(self._connect()) as connection, connection:

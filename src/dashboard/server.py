@@ -19,12 +19,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIRECTORY = Path(__file__).resolve().parent / 'static'
 CACHE_SECONDS = 30
+SAST = ZoneInfo('Africa/Johannesburg')
 JOB_COMMANDS = {
     'refresh': ['refresh', '--all'],    # download results & settle stored predictions
     'predict': ['predict', '--all'],    # predict upcoming fixtures of every league
@@ -113,14 +115,23 @@ class DashboardData:
 
             preferred = preferred_lookup(self._scores())
             df['preferred'] = [
-                preferred.get((league_id, market)) == model_id
+                # Double chance is derived from the league's Result models.
+                preferred.get((league_id, 'Result' if market == 'Double-Chance' else market)) == model_id
                 for league_id, market, model_id in zip(df['league_id'], df['market'], df['model_id'])
             ]
-            today = date.today().isoformat()
+            # Unsettled predictions are "upcoming" until kickoff (SAST), then "awaiting result".
+            now = datetime.now(SAST)
+            today, now_time = now.date().isoformat(), now.strftime('%H:%M')
+
+            def pending_status(match_date: str, kickoff_time) -> str:
+                if match_date != today:
+                    return 'upcoming' if match_date > today else 'awaiting result'
+                return 'upcoming' if isinstance(kickoff_time, str) and kickoff_time > now_time else 'awaiting result'
+
             df['status'] = [
-                ('won' if correct == 1 else 'lost') if pd.notna(settled_at) else
-                ('upcoming' if match_date >= today else 'awaiting result')
-                for settled_at, correct, match_date in zip(df['settled_at'], df['correct'], df['match_date'])
+                ('won' if correct == 1 else 'lost') if pd.notna(settled_at) else pending_status(match_date, kickoff_time)
+                for settled_at, correct, match_date, kickoff_time
+                in zip(df['settled_at'], df['correct'], df['match_date'], df['kickoff_time'])
             ]
             df['probabilities'] = df['probabilities'].map(json.loads)
             return _records(df)

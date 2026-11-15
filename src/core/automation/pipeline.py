@@ -11,6 +11,7 @@ import shutil
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Any, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -30,11 +31,19 @@ from src.core.preprocessing.utils.targets import TargetType
 
 logger = logging.getLogger('prophitbet.automation')
 
+# Kickoff times are handled in South African Standard Time.
+SAST = ZoneInfo('Africa/Johannesburg')
+
 # Odds columns of the predicted label, per market (used to compute the expected value of a bet).
 MARKET_ODDS = {
     TargetType.RESULT: {'H': '1', 'D': 'X', 'A': '2'},
     TargetType.RESULT_UNDER_OVER: {'O': 'Over 2.5', 'U': 'Under 2.5'},
 }
+
+# Double chance is derived from Result models (like the GUI's "Switch to Double Chance").
+DOUBLE_CHANCE_MARKET = 'Double-Chance'
+DOUBLE_CHANCE_LABELS = ['1X', '12', 'X2']
+DOUBLE_CHANCE_OUTCOMES = {'1X': ('H', 'D'), '12': ('H', 'A'), 'X2': ('D', 'A')}
 # Date & Time are the kickoff in SAST (Time is only known for football-data.co.uk fixtures).
 FIXTURE_COLUMNS = [
     'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5', 'Fixture Home', 'Fixture Away', 'Source'
@@ -423,6 +432,14 @@ class AutomationPipeline:
 
         if fixtures_df.empty:
             return pd.DataFrame(columns=FIXTURE_COLUMNS)
+
+        # Matches that have already kicked off are not predicted (predictions must be pre-match).
+        now_sast = datetime.now(SAST).replace(tzinfo=None)
+        kickoffs = pd.to_datetime(fixtures_df['Date'].astype(str) + ' ' + fixtures_df['Time'].fillna('').astype(str), errors='coerce')
+        started = kickoffs.notna() & (kickoffs <= now_sast)
+        if started.any():
+            logger.info('[%s] Skipping %d fixtures that have already kicked off.', league_id, int(started.sum()))
+            fixtures_df = fixtures_df[~started.to_numpy()]
         return fixtures_df[FIXTURE_COLUMNS].sort_values(by=['Date', 'Time'], kind='stable', na_position='last').reset_index(drop=True)
 
     # ------------------------------------------------------------------------------------------------------------
@@ -541,12 +558,13 @@ class AutomationPipeline:
             predictions_df.insert(0, 'League', league_id)
             preferred = self.preferred_models()
             predictions_df['Preferred'] = [
-                'Y' if preferred.get((league_id, market)) == model_id else ''
+                # Double chance comes from the league's preferred Result model.
+                'Y' if preferred.get((league_id, TargetType.RESULT.value if market == DOUBLE_CHANCE_MARKET else market)) == model_id else ''
                 for market, model_id in zip(predictions_df['Market'], predictions_df['Model'])
             ]
+            all_labels = [label for target in TargetType for label in target.get_mapper()] + DOUBLE_CHANCE_LABELS
             probability_columns = list(dict.fromkeys(
-                f'Prob-{label}' for target in TargetType for label in target.get_mapper()
-                if f'Prob-{label}' in predictions_df.columns
+                f'Prob-{label}' for label in all_labels if f'Prob-{label}' in predictions_df.columns
             ))
             leading_columns = [
                 'League', 'Date', 'Time', 'Home', 'Away', '1', 'X', '2', 'Over 2.5', 'Under 2.5',
@@ -626,7 +644,62 @@ class AutomationPipeline:
 
         for column in ['Inputs', 'Source', 'Fixture Home', 'Fixture Away']:
             result_df[column] = matches_df[column]
+
+        if target_type == TargetType.RESULT:
+            result_df = pd.concat(
+                [result_df, AutomationPipeline._double_chance_predictions(result_df, probabilities, model_config, inputs_df)],
+                ignore_index=True
+            )
         return result_df
+
+    @staticmethod
+    def _double_chance_predictions(
+            result_df: pd.DataFrame,
+            probabilities: np.ndarray,
+            model_config: Any,
+            inputs_df: pd.DataFrame
+    ) -> pd.DataFrame:
+        """ Derives double chance predictions (1X, 12, X2) from a Result model's H/D/A probabilities. Their odds are
+            derived from the 1X2 odds (bookmakers' double chance odds can be slightly lower).
+        """
+
+        from src.core.preprocessing.utils.inputs import double_chance_odd
+
+        dc_probabilities = np.column_stack((
+            probabilities[:, 0] + probabilities[:, 1],
+            probabilities[:, 0] + probabilities[:, 2],
+            probabilities[:, 1] + probabilities[:, 2],
+        ))
+        labels = np.asarray(DOUBLE_CHANCE_LABELS)
+        prediction_ids = np.argmax(dc_probabilities, axis=1)
+        confidence = dc_probabilities.max(axis=1)
+
+        dc_df = result_df.drop(columns=[column for column in result_df.columns if column.startswith('Prob-')]).copy()
+        dc_df['Market'] = DOUBLE_CHANCE_MARKET
+        dc_df['Prediction'] = labels[prediction_ids]
+        dc_df['Confidence'] = confidence.round(3)
+
+        odd_pairs = {'1X': ('1', 'X'), '12': ('1', '2'), 'X2': ('X', '2')}
+        odds = []
+        for i, label in enumerate(dc_df['Prediction']):
+            first, second = (pd.to_numeric(dc_df.iloc[i][column], errors='coerce') for column in odd_pairs[label])
+            odds.append(double_chance_odd(first, second) if pd.notna(first) and pd.notna(second) else np.nan)
+        dc_df['Odd'] = odds
+        dc_df['EV'] = (confidence*np.asarray(odds, dtype=float) - 1.0).round(3)
+        for label, values in zip(labels, dc_probabilities.T):
+            dc_df[f'Prob-{label}'] = values.round(3)
+
+        eval_filters = [eval_filter for eval_filter in (getattr(model_config, 'eval_filters', None) or []) if eval_filter.double_chance]
+        if eval_filters:
+            filter_df = inputs_df.copy()
+            for label, values in zip(labels, dc_probabilities.T):
+                filter_df[f'Prob-{label}'] = values
+            filter_df['Prediction'] = prediction_ids
+            passing_ids = filter_matches(matches_df=filter_df, eval_filters=eval_filters).index
+            dc_df['Passes Filters'] = np.where(np.isin(np.arange(dc_df.shape[0]), passing_ids), 'Y', 'N')
+        else:
+            dc_df['Passes Filters'] = ''
+        return dc_df
 
 
 def export_predictions(runs: List[PredictionRun], output_directory: str, run_date: Optional[datetime] = None) -> List[str]:

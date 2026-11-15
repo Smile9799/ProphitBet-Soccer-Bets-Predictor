@@ -41,7 +41,7 @@
   .note { color: var(--muted); font-size: 12.5px; margin: 0 0 12px; max-width: 900px; }
   .table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; box-shadow: var(--shadow); }
   table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th, td { padding: 8px 8px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
   th { position: sticky; top: 0; background: var(--panel-2); font-size: 12px; color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; }
   th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
   th .arrow { opacity: .6; }
@@ -71,6 +71,16 @@
   #job summary { padding: 10px 14px; cursor: pointer; }
   #job pre { margin: 0; padding: 10px 14px; max-height: 260px; overflow: auto; font-size: 12px; border-top: 1px solid var(--border); white-space: pre-wrap; }
   .error { color: var(--bad); padding: 14px; }
+  th { white-space: normal; vertical-align: bottom; }
+  td.wrap { white-space: normal; }
+  @media (max-width: 1250px) { .narrow-hide { display: none; } }
+  @media (max-width: 1060px) { .narrower-hide { display: none; } }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; white-space: normal; min-width: 280px; }
+  .chip { display: inline-flex; gap: 5px; align-items: baseline; border: 1px solid var(--border); border-radius: 6px; padding: 1px 7px; font-size: 12.5px; background: var(--panel); }
+  .chip .k { color: var(--muted); font-size: 11.5px; }
+  .chip.won { background: var(--good-soft); border-color: transparent; }
+  .chip.lost { background: var(--bad-soft); border-color: transparent; }
+  .chip.value { border-color: var(--good); }
   @media (max-width: 700px) { header, nav, main { padding-left: 16px; padding-right: 16px; } }
 </style>
 </head>
@@ -98,9 +108,9 @@
 const state = { tab: 'predictions', leagues: [], models: [], predictions: [], sort: {}, filters: {
   view: 'matches', status: 'upcoming', league: '', market: '', preferredOnly: true, valueOnly: false, minConfidence: 0, search: '', allModels: false
 }};
-const MARKET_ORDER = ['Result', 'Result-U/O', 'BTTS', 'U/O-1.5', 'U/O-3.5', 'HT-Result', 'Home-Win-Either-Half', 'Away-Win-Either-Half',
+const MARKET_ORDER = ['Result', 'Double-Chance', 'Result-U/O', 'BTTS', 'U/O-1.5', 'U/O-3.5', 'HT-Result', 'Home-Win-Either-Half', 'Away-Win-Either-Half',
   'Home-U/O-0.5', 'Home-U/O-1.5', 'Away-U/O-0.5', 'Away-U/O-1.5'];
-const SHORT_MARKET = { 'Result': '1X2', 'Result-U/O': 'O/U 2.5', 'BTTS': 'BTTS', 'U/O-1.5': 'O/U 1.5', 'U/O-3.5': 'O/U 3.5', 'HT-Result': 'HT 1X2',
+const SHORT_MARKET = { 'Result': '1X2', 'Double-Chance': 'DC', 'Result-U/O': 'O/U 2.5', 'BTTS': 'BTTS', 'U/O-1.5': 'O/U 1.5', 'U/O-3.5': 'O/U 3.5', 'HT-Result': 'HT 1X2',
   'Home-Win-Either-Half': 'Home wins a half', 'Away-Win-Either-Half': 'Away wins a half', 'Home-U/O-0.5': 'Home O/U 0.5',
   'Home-U/O-1.5': 'Home O/U 1.5', 'Away-U/O-0.5': 'Away O/U 0.5', 'Away-U/O-1.5': 'Away O/U 1.5' };
 const $ = (selector) => document.querySelector(selector);
@@ -113,6 +123,10 @@ const marketLabel = (m) => m === 'Result-U/O' ? 'U/O 2.5' : m;
 // Kickoff in SAST (time unknown for FootyStats-only fixtures).
 const kickoff = (p) => `${esc(p.match_date)} <span class="${p.kickoff_time ? '' : 'muted'}">${esc(p.kickoff_time || '–')}</span>`;
 const kickoffSort = (p) => `${p.match_date} ${p.kickoff_time || '99:99'}`;
+// Has the match kicked off? (SAST = UTC+2, no daylight saving). Without a time, it counts from the end of the day.
+const hasKickedOff = (p) => new Date(`${p.match_date}T${p.kickoff_time || '23:59'}:00+02:00`) <= new Date();
+// Upcoming predictions move to "awaiting result" at kickoff, also while the page stays open.
+const refreshStatuses = () => state.predictions.forEach((p) => { if (p.status === 'upcoming' && hasKickedOff(p)) p.status = 'awaiting result'; });
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -147,8 +161,8 @@ function table(id, columns, rows, emptyText) {
       return (x > y ? 1 : x < y ? -1 : 0) * sort.dir;
     });
   }
-  const head = columns.map((c) => `<th class="${c.num ? 'num' : ''}" data-table="${id}" data-key="${c.key}">${c.label}${sort && sort.key === c.key ? ` <span class="arrow">${sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
-  const body = rows.map((row) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''}">${c.render ? c.render(row) : esc(row[c.key])}</td>`).join('')}</tr>`).join('');
+  const head = columns.map((c) => `<th class="${c.num ? 'num' : ''}${c.hideNarrow ? ' narrow-hide' : ''}${c.hideNarrower ? ' narrower-hide' : ''}" data-table="${id}" data-key="${c.key}">${c.label}${sort && sort.key === c.key ? ` <span class="arrow">${sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
+  const body = rows.map((row) => `<tr>${columns.map((c) => `<td class="${c.num ? 'num' : ''}${c.key === 'league_id' || c.key === 'probabilities' || c.key === 'picks' || c.key === 'home' ? ' wrap' : ''}${c.hideNarrow ? ' narrow-hide' : ''}${c.hideNarrower ? ' narrower-hide' : ''}">${c.render ? c.render(row) : esc(row[c.key])}</td>`).join('')}</tr>`).join('');
   return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
@@ -164,7 +178,9 @@ document.addEventListener('click', (event) => {
 function selectOptions(values, selected, allLabel, label = (v) => v) {
   return `<option value="">${allLabel}</option>` + values.map((v) => `<option value="${esc(v)}" ${v === selected ? 'selected' : ''}>${esc(label(v))}</option>`).join('');
 }
-const allMarkets = () => [...new Set(state.models.map((m) => m.market))];
+const allMarkets = () => MARKET_ORDER.filter((m) => state.models.some((x) => x.market === m) || state.predictions.some((x) => x.market === m))
+  .concat([...new Set(state.models.map((x) => x.market))].filter((m) => !MARKET_ORDER.includes(m)));
+const shortModel = (id) => { const kind = /LightGBM/.test(id) ? 'LightGBM' : /LogisticRegressor/.test(id) ? 'LR' : id; return `<span title="${esc(id)}">${esc(kind)}</span>`; };
 
 // ---------- Predictions ----------
 function renderPredictions() {
@@ -184,10 +200,10 @@ function renderPredictions() {
     { key: 'market', label: 'Market', render: (p) => esc(marketLabel(p.market)) },
     { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span>` },
     { key: 'confidence', label: 'Confidence', num: true, render: (p) => `<span class="bar"><span style="width:${(p.confidence || 0) * 100}%"></span></span>${pct(p.confidence)}` },
-    { key: 'probabilities', label: 'Probabilities', sortValue: (p) => p.confidence, render: (p) => `<span class="muted">${Object.entries(p.probabilities).map(([k, v]) => `${esc(k)} ${pct(v, 0)}`).join(' · ')}</span>` },
+    { key: 'probabilities', label: 'Probabilities', hideNarrower: true, sortValue: (p) => p.confidence, render: (p) => `<span class="muted">${Object.entries(p.probabilities).map(([k, v]) => `${esc(k)}&nbsp;${pct(v, 0)}`).join(' · ')}</span>` },
     { key: 'odd', label: 'Odd', num: true, render: (p) => num(p.odd, 2) },
     { key: 'ev', label: 'EV', num: true, render: (p) => p.ev == null ? '–' : signed(p.ev) + (p.ev > 0 && !(p.skill_vs_bookmaker > 0) ? ' <span class="muted" title="Model does not beat the bookmaker on its hold-out matches">?</span>' : '') },
-    { key: 'model_id', label: 'Model', render: (p) => `${p.preferred ? '<span class="star" title="Preferred model">★</span> ' : ''}${esc(p.model_id)}` },
+    { key: 'model_id', label: 'Model', render: (p) => `${p.preferred ? '<span class="star" title="Preferred model">★</span> ' : ''}${shortModel(p.model_id)}` },
     { key: 'status', label: 'Result', render: (p) => p.status === 'won' || p.status === 'lost'
         ? `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>`
         : `<span class="badge ${p.status === 'upcoming' ? 'upcoming' : 'awaiting'}">${esc(p.status)}</span>` },
@@ -203,22 +219,21 @@ function renderPredictions() {
       (matches[key] ||= { match_date: p.match_date, kickoff_time: p.kickoff_time, league_id: p.league_id, home: p.home, away: p.away, odd_1: p.odd_1, odd_x: p.odd_x, odd_2: p.odd_2, picks: {} }).picks[p.market] = p;
     });
     const matchRows = Object.values(matches);
-    const markets = MARKET_ORDER.filter((m) => matchRows.some((r) => r.picks[m]));
     if (!state.sort.matches) state.sort.matches = { key: 'match_date', dir: 1 };
-    const pickCell = (p) => {
-      if (!p) return '<span class="muted">–</span>';
-      const cls = p.status === 'won' ? 'badge won' : p.status === 'lost' ? 'badge lost' : '';
-      const value = p.ev > 0 && p.skill_vs_bookmaker > 0 ? ' <span class="badge won" title="Value bet: positive expected value from a model that beats the bookmaker">value</span>' : '';
-      return `<span class="${cls}" title="${esc(p.model_id)} · ${Object.entries(p.probabilities).map(([k, v]) => `${k} ${pct(v, 0)}`).join(' · ')}"><span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span></span>${value}`;
+    const chip = (m, p) => {
+      const settled = p.status === 'won' || p.status === 'lost' ? ` ${p.status}` : '';
+      const value = p.ev > 0 && p.skill_vs_bookmaker > 0;
+      const title = `${SHORT_MARKET[m] || m} · ${p.model_id} · ${Object.entries(p.probabilities).map(([k, v]) => `${k} ${pct(v, 0)}`).join(' · ')}${p.odd ? ` · odd ${num(p.odd, 2)} · EV ${num(p.ev, 2)}` : ''}${value ? ' · value bet' : ''}${settled ? ` · actual ${p.actual}` : ''}`;
+      return `<span class="chip${settled}${value ? ' value' : ''}" title="${esc(title)}"><span class="k">${esc(SHORT_MARKET[m] || m)}</span><b>${esc(p.prediction)}</b>${pct(p.confidence, 0)}${value ? ' <span class="pos">value</span>' : ''}</span>`;
     };
     content = table('matches', [
       { key: 'match_date', label: 'Kickoff (SAST)', sortValue: kickoffSort, render: kickoff },
-      { key: 'league_id', label: 'League', render: (r) => esc(leagueName(r.league_id)) },
-      { key: 'home', label: 'Match', render: (r) => `<span class="match">${esc(r.home)}</span> <span class="muted">vs</span> <span class="match">${esc(r.away)}</span>` },
-      { key: 'odd_1', label: '1 · X · 2', render: (r) => r.odd_1 ? `<span class="muted">${num(r.odd_1, 2)} · ${num(r.odd_x, 2)} · ${num(r.odd_2, 2)}</span>` : '–' },
-      ...markets.map((m) => ({ key: m, label: SHORT_MARKET[m] || m, sortValue: (r) => r.picks[m] ? r.picks[m].confidence : null, render: (r) => pickCell(r.picks[m]) })),
+      { key: 'league_id', label: 'League', render: (r) => `<span class="muted">${esc(leagueName(r.league_id))}</span>` },
+      { key: 'home', label: 'Match', render: (r) => `<span class="match">${esc(r.home)}</span> <span class="muted">vs</span> <span class="match">${esc(r.away)}</span><div class="muted" style="white-space:nowrap">${r.odd_1 ? `1 ${num(r.odd_1, 2)} · X ${num(r.odd_x, 2)} · 2 ${num(r.odd_2, 2)}` : ''}</div>` },
+      { key: 'picks', label: 'Picks (preferred model per market) — hover for probabilities', sortValue: (r) => Object.keys(r.picks).length,
+        render: (r) => `<div class="chips">${MARKET_ORDER.filter((m) => r.picks[m]).concat(Object.keys(r.picks).filter((m) => !MARKET_ORDER.includes(m))).map((m) => chip(m, r.picks[m])).join('')}</div>` },
     ], matchRows, state.predictions.length ? 'No matches with these filters.' : 'No predictions stored yet. They are stored by the scheduled runs, or click “Predict upcoming”.')
-      + `<div class="count">${matchRows.length} matches · hover a pick for its probabilities and model</div>`;
+      + `<div class="count">${matchRows.length} matches · green = won, red = lost · outlined “value” = value bet</div>`;
   } else {
     content = table('predictions', columns, rows, state.predictions.length
       ? 'No predictions match the filters.'
@@ -305,7 +320,7 @@ function renderRecord() {
       { key: 'prediction', label: 'Pick', render: (p) => `<span class="pick">${esc(p.prediction)}</span> <span class="muted">${pct(p.confidence, 0)}</span>` },
       { key: 'actual', label: 'Actual', render: (p) => `<span class="badge ${p.status}">${p.status === 'won' ? '✓' : '✗'} ${esc(p.actual)}</span>` },
       { key: 'profit', label: 'Profit', num: true, render: (p) => p.profit == null ? '–' : signed(p.profit) },
-      { key: 'model_id', label: 'Model' },
+      { key: 'model_id', label: 'Model', render: (p) => shortModel(p.model_id) },
     ], recent, 'Nothing settled yet: results of stored predictions arrive with the next refresh.')}`;
 }
 
@@ -325,8 +340,7 @@ function renderModels() {
     ${table('models', [
       { key: 'league_id', label: 'League', render: (m) => esc(leagueName(m.league_id)) },
       { key: 'market', label: 'Market', render: (m) => esc(marketLabel(m.market)) },
-      { key: 'model_id', label: 'Model', render: (m) => `${m.preferred ? `<span class="star" title="Preferred (${esc(m.preferred_basis)})">★</span> ` : ''}${esc(m.model_id)}` },
-      { key: 'classifier', label: 'Type' },
+      { key: 'model_id', label: 'Model', render: (m) => `${m.preferred ? `<span class="star" title="Preferred (${esc(m.preferred_basis)})">★</span> ` : ''}${shortModel(m.model_id)}` },
       { key: 'holdout_log_loss', label: 'Hold-out log loss', num: true, render: (m) => num(m.holdout_log_loss) },
       { key: 'holdout_accuracy', label: 'Hold-out acc.', num: true, render: (m) => pct(m.holdout_accuracy) },
       { key: 'skill_vs_bookmaker', label: 'Skill vs bookmaker', num: true, render: (m) => m.skill_vs_bookmaker == null ? '–' : signed(100 * m.skill_vs_bookmaker, 1) + '%' },
@@ -334,7 +348,7 @@ function renderModels() {
       { key: 'accuracy', label: 'Live acc.', num: true, render: (m) => pct(m.accuracy) },
       { key: 'log_loss', label: 'Live log loss', num: true, render: (m) => num(m.log_loss) },
       { key: 'roi', label: 'Live ROI', num: true, render: (m) => m.roi == null ? '–' : signed(100 * m.roi, 1) + '%' },
-      { key: 'preferred_basis', label: 'Preferred by', render: (m) => m.preferred ? esc(m.preferred_basis) : '' },
+      { key: 'preferred_basis', label: 'Preferred by', hideNarrow: true, render: (m) => m.preferred ? esc(m.preferred_basis) : '' },
     ], rows, 'No models saved.')}
     <div class="count">${rows.length} models</div>`;
 }
@@ -355,6 +369,7 @@ function renderLeagues() {
 }
 
 function render() {
+  refreshStatuses();
   const view = { predictions: renderPredictions, record: renderRecord, models: renderModels, leagues: renderLeagues }[state.tab];
   $('#view').innerHTML = view();
 }
@@ -412,6 +427,7 @@ $('#btn-predict').addEventListener('click', () => startJob('predict'));
 
 load();
 pollJob();
+setInterval(() => { if (state.tab === 'predictions' && !document.querySelector(':focus')) render(); }, 60000);
 </script>
 </body>
 </html>
