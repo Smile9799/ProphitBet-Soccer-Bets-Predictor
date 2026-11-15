@@ -9,6 +9,7 @@ import json
 import math
 import os
 import sqlite3
+import threading
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
@@ -93,6 +94,11 @@ def _float(value) -> Optional[float]:
     return value if math.isfinite(value) else None
 
 
+_SCHEMA_STATEMENTS = [statement.strip() for statement in _SCHEMA.split(';') if statement.strip()]
+_SCHEMA_LOCK = threading.Lock()
+_SCHEMA_READY = set()
+
+
 class PredictionLedger:
     """ SQLite-backed store of predictions and their outcomes.
 
@@ -105,33 +111,58 @@ class PredictionLedger:
         self._filepath = filepath
         is_new = not os.path.exists(filepath)
         os.makedirs(os.path.dirname(filepath) or '.', exist_ok=True)
-
-        with closing(self._connect()) as connection, connection:
-            connection.executescript(_SCHEMA)
-            # Upgrading ledgers created before kickoff times (SAST) were stored.
-            columns = {row['name'] for row in connection.execute('PRAGMA table_info(predictions)')}
-            if 'kickoff_time' not in columns:
-                connection.execute('ALTER TABLE predictions ADD COLUMN kickoff_time TEXT')
-            if 'line' not in columns:
-                connection.execute('ALTER TABLE predictions ADD COLUMN line REAL')
-
-            # Upgrading ledgers whose predictions were unique per model only: a Result model also stores double
-            # chance predictions, so the market is part of a prediction's identity.
-            table_sql = connection.execute(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'predictions'"
-            ).fetchone()['sql']
-            if 'model_id, market)' not in table_sql:
-                columns = [row['name'] for row in connection.execute('PRAGMA table_info(predictions)')]
-                connection.execute('DROP INDEX IF EXISTS idx_predictions_league')
-                connection.execute('ALTER TABLE predictions RENAME TO predictions_old')
-                connection.executescript(_SCHEMA)
-                column_list = ', '.join(columns)
-                connection.execute(f'INSERT INTO predictions ({column_list}) SELECT {column_list} FROM predictions_old')
-                connection.execute('DROP TABLE predictions_old')
+        self._ensure_schema()
 
         # Importing predictions exported before the ledger existed.
         if is_new:
             self.import_csv_files(directory=os.path.dirname(filepath) or '.')
+
+    def _ensure_schema(self):
+        """ Creates or upgrades the ledger's schema exactly once per process. The checks and upgrades run inside one
+            exclusive transaction, so concurrent users (dashboard requests, a scheduled run) cannot apply the same
+            upgrade twice (e.g. "duplicate column name"), and a failed upgrade leaves the ledger unchanged.
+        """
+
+        path = os.path.abspath(self._filepath)
+        with _SCHEMA_LOCK:
+            if path in _SCHEMA_READY:
+                return
+
+            connection = sqlite3.connect(self._filepath, timeout=30, isolation_level=None)
+            connection.row_factory = sqlite3.Row
+            try:
+                connection.execute('PRAGMA journal_mode=WAL')
+                connection.execute('BEGIN IMMEDIATE')
+                for statement in _SCHEMA_STATEMENTS:
+                    connection.execute(statement)
+
+                # Upgrading ledgers created before kickoff times (SAST) and Asian handicap lines were stored.
+                columns = {row['name'] for row in connection.execute('PRAGMA table_info(predictions)')}
+                for column, column_type in (('kickoff_time', 'TEXT'), ('line', 'REAL')):
+                    if column not in columns:
+                        connection.execute(f'ALTER TABLE predictions ADD COLUMN {column} {column_type}')
+
+                # Upgrading ledgers whose predictions were unique per model only: a Result model also stores double
+                # chance predictions, so the market is part of a prediction's identity.
+                table_sql = connection.execute(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'predictions'"
+                ).fetchone()['sql']
+                if 'model_id, market)' not in table_sql:
+                    column_list = ', '.join(row['name'] for row in connection.execute('PRAGMA table_info(predictions)'))
+                    connection.execute('DROP INDEX IF EXISTS idx_predictions_league')
+                    connection.execute('ALTER TABLE predictions RENAME TO predictions_old')
+                    for statement in _SCHEMA_STATEMENTS:
+                        connection.execute(statement)
+                    connection.execute(f'INSERT INTO predictions ({column_list}) SELECT {column_list} FROM predictions_old')
+                    connection.execute('DROP TABLE predictions_old')
+
+                connection.execute('COMMIT')
+            except Exception:
+                connection.execute('ROLLBACK')
+                raise
+            finally:
+                connection.close()
+            _SCHEMA_READY.add(path)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._filepath, timeout=30)
