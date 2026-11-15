@@ -170,6 +170,7 @@ If you are unfamiliar with installing Graphviz on macOS, follow this tutorial:
 
 ## Step 4 - Download Code
 Download the code from the github repository other by clicking on the green "Code" button above selecting Download zip or by copying this address: https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor/archive/refs/heads/main.zip
+(This fork, with extra markets and automation: https://github.com/Smile9799/ProphitBet-Soccer-Bets-Predictor)
 After the download, unzip the files into your preferred directory (e.g. *Downloads/ProphitBet*)
 
 ## Step 5 - Install Python Libraries
@@ -509,6 +510,52 @@ However, you can also specify the evaluation filters to filter
 specific odd ranges and probabilities. Finally, you can double-click on the
 fixture table to edit its values.
 ![Fixture Prediction](screenshots/Fixtures.png)
+
+## Additional Markets (fork)
+Besides **Result** (1X2) and **Result-U/O** (Under/Over 2.5), models can be trained on:
+
+| Market | Labels | Meaning | Leagues |
+|---|---|---|---|
+| `U/O-1.5`, `U/O-3.5` | U / O | Total goals under/over 1.5 and 3.5 | All |
+| `BTTS` | N / Y | Both teams to score | All |
+| `Home-U/O-0.5`, `Home-U/O-1.5` | U / O | Home team total goals | All |
+| `Away-U/O-0.5`, `Away-U/O-1.5` | U / O | Away team total goals | All |
+| `HT-Result` | H / D / A | Half-time result | Main leagues (half-time scores) |
+| `Home-Win-Either-Half`, `Away-Win-Either-Half` | N / Y | Team wins at least one of the two halves | Main leagues (half-time scores) |
+
+Half-time markets require half-time scores, which football-data.co.uk provides for the "main" leagues only.
+Leagues created before these markets existed are re-downloaded automatically on their next update.
+Outcome columns are never used as model inputs, so existing models keep working unchanged.
+
+## Automation (fork)
+`cli.py` runs the data refresh, model retraining and fixture predictions without the GUI:
+
+```bash
+python cli.py list                         # leagues, available markets and saved models
+python cli.py refresh --all                # download the latest matches (--rebuild re-downloads all seasons)
+python cli.py retrain --all                # retrain saved models on the latest matches
+python cli.py predict --all --days 7       # predict the next 7 days of fixtures with every saved model
+python cli.py run --all                    # refresh -> retrain -> predict (for scheduled runs)
+```
+
+* **Retraining** reuses each model's saved hyperparameters and hold-out size. A retrained model replaces the saved one
+  only if its log loss on the most recent hold-out matches is not worse than the saved model's on the same matches
+  (`--tolerance` allows a small increase, `--force` always replaces). Models are skipped when no new matches were played.
+  The replaced model is backed up to `storage/leagues/<league>/model_backups/<model>/`.
+* **Predictions** are written to `storage/predictions/<date>/` (a CSV per league and a `predictions.xlsx` workbook with a
+  `Skipped` sheet listing matches that could not be predicted and why). Matches passing a model's saved evaluation
+  filters are flagged in the `Passes Filters` column. `Fixture Home`/`Fixture Away` show the original FootyStats names
+  to verify the automatic team-name matching.
+* **Logs** are written to `storage/logs/automation.log`.
+
+To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at 06:30:
+
+```bash
+30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
+```
+
+`scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).
+**Do not run the automation while the GUI is open**, since both keep and save their own copy of the model index.
 
 ## Help & Support
 ProphitBet-v3 introduces a redesigned *elp & Support menu, providing an 

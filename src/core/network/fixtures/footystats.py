@@ -1,3 +1,4 @@
+import time
 import requests
 import pandas as pd
 from typing import List, Optional
@@ -7,8 +8,12 @@ from lxml import html
 class FootyStatsScraper:
     """ Footystats scraper class. It scrapes league data from each feature. """
 
-    def __init__(self):
+    def __init__(self, timeout: float = 20.0, max_attempts: int = 3, backoff_seconds: float = 10.0):
         self._headers ={'User-Agent': 'Mozilla/5.0'}
+        self._timeout = timeout
+        self._max_attempts = max_attempts
+        self._backoff_seconds = backoff_seconds
+        self._retry_status_codes = {403, 429, 500, 502, 503, 504}
 
         self._xpath_date_query = '//div[contains(@class, "full-matches-table mt1e")]//h2/text()'
         self._xpath_table_query = '//div[contains(@class, "full-matches-table mt1e")]'
@@ -19,8 +24,17 @@ class FootyStatsScraper:
             fixture_url: (str) footystat's fixture url.
         """
 
-        # Scraping HTML webpage.
-        response = requests.get(url=fixture_url, headers=self._headers)
+        # Scraping HTML webpage. Rate-limit (403/429) and server errors are retried with an increasing delay.
+        for attempt in range(1, self._max_attempts + 1):
+            try:
+                response = requests.get(url=fixture_url, headers=self._headers, timeout=self._timeout)
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt == self._max_attempts:
+                    raise
+            else:
+                if response.status_code not in self._retry_status_codes or attempt == self._max_attempts:
+                    break
+            time.sleep(self._backoff_seconds*attempt)
         response.raise_for_status()
 
         # Constructing tree from HTML source code.
