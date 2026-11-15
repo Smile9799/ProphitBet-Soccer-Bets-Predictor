@@ -1,0 +1,12 @@
+# ProphitBet schedule (tuesday 17:30 SAST). Persistent: a run missed while the computer was off or asleep
+# starts as soon as it is back on.
+[Unit]
+Description=ProphitBet automation every Tue 17:30 SAST
+
+[Timer]
+OnCalendar=Tue *-*-* 17:30:00 Africa/Johannesburg
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

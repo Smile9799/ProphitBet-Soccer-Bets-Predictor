@@ -581,10 +581,14 @@ python cli.py predict --all --days 7       # predict the next 7 days of fixtures
   to verify the automatic team-name matching.
 * **Logs** are written to `storage/logs/automation.log`.
 
-To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at 06:30:
+`scripts/setup.sh` schedules it with **systemd user timers** (`scripts/systemd/`): Tuesday 17:30 SAST (full run with
+weekly retraining) and Friday 17:30 SAST (`--skip-retrain`). A run missed while the computer was off or asleep starts
+as soon as it is back on. Without systemd, it falls back to cron.
 
 ```bash
-30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
+systemctl --user list-timers 'prophitbet-*'          # next runs
+systemctl --user start prophitbet-tuesday.service    # run now (in the background)
+journalctl --user -u prophitbet-tuesday.service      # service status; run output: storage/logs/scheduler.log
 ```
 
 `scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).

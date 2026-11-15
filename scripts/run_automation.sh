@@ -9,8 +9,9 @@
 #   PROPHITBET_PYTHON  Python 3.11 interpreter (default: $HOME/prophitbet-venv/bin/python)
 #   PROPHITBET_BACKUP  1 (default) backs up data & models to MEGA after the run (scripts/backup_to_mega.sh)
 #
-# Example crontab entry (daily at 06:30; see README "Automation"):
-#   30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
+# Scheduled by systemd user timers (scripts/systemd/, installed by scripts/setup.sh):
+#   Tuesday 17:30 SAST (full run) and Friday 17:30 SAST (--skip-retrain); missed runs start when the computer is back on.
+#   View:  systemctl --user list-timers 'prophitbet-*'      Run now:  systemctl --user start prophitbet-tuesday.service
 #
 # Output: storage/predictions/<date>/  ·  Log: storage/logs/automation.log
 # The GUI must not be open during a run (both write the model index): the run waits for it to be

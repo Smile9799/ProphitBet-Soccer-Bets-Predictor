@@ -1,0 +1,15 @@
+# ProphitBet scheduled run (tuesday). Installed by scripts/setup.sh into ~/.config/systemd/user/
+# (@INSTALL_DIR@ and @PYTHON@ are replaced with the install folder and the venv's Python).
+[Unit]
+Description=ProphitBet automation (tuesday): refresh results, create missing plan leagues/models, weekly retrain, predict, MEGA backup
+
+[Service]
+Type=oneshot
+WorkingDirectory=@INSTALL_DIR@
+Environment=PROPHITBET_PYTHON=@PYTHON@
+ExecStart=@INSTALL_DIR@/scripts/run_automation.sh
+StandardOutput=append:@INSTALL_DIR@/storage/logs/scheduler.log
+StandardError=append:@INSTALL_DIR@/storage/logs/scheduler.log
+# Runs can take long (first runs train many models); low priority keeps the desktop responsive.
+TimeoutStartSec=infinity
+Nice=10

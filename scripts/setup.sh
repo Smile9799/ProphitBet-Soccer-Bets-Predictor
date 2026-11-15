@@ -7,7 +7,7 @@
 #   4. Installs MEGAcmd when missing and logs in to MEGA (prompts for e-mail/password).
 #   5. Restores the latest MEGA backup (leagues, models, predictions) if you want it.
 #   6. Creates a desktop / application-menu launcher with the ProphitBet icon.
-#   7. Installs the Tuesday & Friday 17:30 automation schedule (cron), if you want it.
+#   7. Installs the Tuesday & Friday 17:30 SAST automation schedule (systemd timers; cron fallback), if you want it.
 #
 # Fresh machine (download first so the script can ask questions):
 #   curl -fsSL https://raw.githubusercontent.com/Smile9799/ProphitBet-Soccer-Bets-Predictor/main/scripts/setup.sh -o setup.sh
@@ -253,18 +253,42 @@ else
 fi
 
 # ----------------------------------------------------------------------------------------------------------------
-step "7/7 Automation schedule (Tuesday & Friday 17:30, local time)"
+step "7/7 Automation schedule (Tuesday & Friday 17:30 SAST)"
 if [ "$CRON" = yes ] || { [ "$CRON" = ask ] && ask "Install the automation schedule?" y; }; then
-    PYTHON_ENV=""
-    [ "$VENV_DIR" != "$HOME/prophitbet-venv" ] && PYTHON_ENV="PROPHITBET_PYTHON=$VENV_DIR/bin/python "
-    CRON_LINES="# ProphitBet automation (local time). Output: $INSTALL_DIR/storage/predictions/<date>/
+    mkdir -p storage/logs
+    # Removing ProphitBet cron entries (older installs), so runs are never scheduled twice.
+    if crontab -l >/dev/null 2>&1; then
+        { crontab -l 2>/dev/null | grep -v -e 'ProphitBet automation' -e 'run_automation.sh' -e '^# Tuesday 17:30' -e '^# Friday 17:30' || true; } | crontab -
+    fi
+
+    if command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+        # systemd user timers: unlike cron, a run missed while the computer was off/asleep starts when it is back on.
+        UNIT_DIR="$HOME/.config/systemd/user"
+        mkdir -p "$UNIT_DIR"
+        for unit in prophitbet-tuesday.service prophitbet-tuesday.timer prophitbet-friday.service prophitbet-friday.timer; do
+            sed -e "s#@INSTALL_DIR@#$INSTALL_DIR#g" -e "s#@PYTHON@#$VENV_DIR/bin/python#g" "scripts/systemd/$unit" > "$UNIT_DIR/$unit"
+        done
+        systemctl --user daemon-reload
+        systemctl --user enable --now prophitbet-tuesday.timer prophitbet-friday.timer >/dev/null
+        info "Installed systemd timers (systemctl --user list-timers 'prophitbet-*' to view)."
+        # Lingering lets the timers run while logged out (e.g. after a reboot before logging in).
+        if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != "yes" ]; then
+            loginctl enable-linger "$USER" 2>/dev/null \
+                && info "Enabled running the schedule while logged out." \
+                || info "Runs while logged out need: sudo loginctl enable-linger $USER (missed runs still start at login)."
+        fi
+    else
+        # Fallback without systemd: cron (missed runs are not caught up).
+        PYTHON_ENV=""
+        [ "$VENV_DIR" != "$HOME/prophitbet-venv" ] && PYTHON_ENV="PROPHITBET_PYTHON=$VENV_DIR/bin/python "
+        CRON_LINES="# ProphitBet automation (local time). Output: $INSTALL_DIR/storage/predictions/<date>/
 # Tuesday 17:30: refresh results -> create missing plan leagues/models -> weekly retrain -> predict -> MEGA backup
 30 17 * * 2 ${PYTHON_ENV}$INSTALL_DIR/scripts/run_automation.sh >> $INSTALL_DIR/storage/logs/cron.log 2>&1
 # Friday 17:30: refresh results -> create missing plan leagues/models -> predict (no retraining) -> MEGA backup
 30 17 * * 5 ${PYTHON_ENV}$INSTALL_DIR/scripts/run_automation.sh --skip-retrain >> $INSTALL_DIR/storage/logs/cron.log 2>&1"
-    mkdir -p storage/logs
-    { crontab -l 2>/dev/null | grep -v -e 'ProphitBet automation' -e 'run_automation.sh' -e '^# Tuesday 17:30' -e '^# Friday 17:30' || true; echo "$CRON_LINES"; } | crontab -
-    info "Installed (crontab -l to view)."
+        { crontab -l 2>/dev/null || true; echo "$CRON_LINES"; } | crontab -
+        info "systemd user timers are not available: installed cron entries instead (crontab -l to view)."
+    fi
 else
     info "Skipped."
 fi
