@@ -1,5 +1,5 @@
 {
-  "_comment": "Personal automation plan (not committed). See automation_plan.example.json for all options. Add a league here and the next scheduled run creates it and trains its models.",
+  "_comment": "All leagues. Per league: tuned LightGBM for Result and Result-U/O, logistic regression for every available market. Add/remove leagues or models here; each run creates whatever is missing. Existing models are never deleted by the plan.",
   "predict_days": 4,
   "retrain_tolerance": 0.0,
   "league_defaults": {
@@ -7,19 +7,181 @@
     "stats_columns": "all"
   },
   "model_defaults": {
-    "test_size": 400,
+    "test_size": 0.12,
     "normalizer": "Standard",
     "calibrate_probabilities": true,
     "tune_metric": "Log Loss"
   },
   "leagues": [
     {
+      "country": "Argentina",
+      "name": "Primera-Division",
+      "league_id": "Argentina-Primera-Division-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Argentina",
+      "name": "Primera-Nacional",
+      "league_id": "Argentina-Primera-Nacional-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Belgium",
+      "name": "Jupiler-League",
+      "league_id": "Belgium-Jupiler-League-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Brazil",
+      "name": "Serie-A",
+      "league_id": "Brazil-Serie-A-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "China",
+      "name": "Super-League",
+      "league_id": "China-Super-League-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Czech-Republic",
+      "name": "Chance-Liga",
+      "league_id": "Czech-Republic-Chance-Liga-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Denmark",
+      "name": "Super-Liga",
+      "league_id": "Denmark-Super-Liga-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Denmark",
+      "name": "First-Division",
+      "league_id": "Denmark-First-Division-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
       "country": "England",
       "name": "Premier-League",
       "league_id": "England-Premier-League-01",
       "models": [
-        {"classifier": "LogisticRegressor", "targets": "all"},
-        {"classifier": "LightGBM", "targets": "all", "tune_trials": 20}
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
       ]
     },
     {
@@ -27,8 +189,531 @@
       "name": "Championship",
       "league_id": "England-Championship-01",
       "models": [
-        {"classifier": "LogisticRegressor", "targets": "all", "test_size": 550},
-        {"classifier": "LightGBM", "targets": "all", "tune_trials": 20, "test_size": 550}
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "England",
+      "name": "League-1",
+      "league_id": "England-League-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "England",
+      "name": "League-2",
+      "league_id": "England-League-2-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Finland",
+      "name": "Veikkausliiga",
+      "league_id": "Finland-Veikkausliiga-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "France",
+      "name": "Ligue-1",
+      "league_id": "France-Ligue-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "France",
+      "name": "Ligue-2",
+      "league_id": "France-Ligue-2-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Germany",
+      "name": "Bundesliga-1",
+      "league_id": "Germany-Bundesliga-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Germany",
+      "name": "Bundesliga-2",
+      "league_id": "Germany-Bundesliga-2-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Greece",
+      "name": "Super-League",
+      "league_id": "Greece-Super-League-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Ireland",
+      "name": "Premier-Division",
+      "league_id": "Ireland-Premier-Division-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Italy",
+      "name": "Serie-A",
+      "league_id": "Italy-Serie-A-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Italy",
+      "name": "Serie-B",
+      "league_id": "Italy-Serie-B-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Japan",
+      "name": "J-1",
+      "league_id": "Japan-J-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Mexico",
+      "name": "Liga-MX",
+      "league_id": "Mexico-Liga-MX-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Netherlands",
+      "name": "Eredivisie",
+      "league_id": "Netherlands-Eredivisie-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Norway",
+      "name": "Eliteserien",
+      "league_id": "Norway-Eliteserien-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Poland",
+      "name": "Ekstraklasa",
+      "league_id": "Poland-Ekstraklasa-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Portugal",
+      "name": "Liga-1",
+      "league_id": "Portugal-Liga-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Romania",
+      "name": "Liga-1",
+      "league_id": "Romania-Liga-1-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Russia",
+      "name": "Premier-League",
+      "league_id": "Russia-Premier-League-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Russia",
+      "name": "FNL",
+      "league_id": "Russia-FNL-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Scotland",
+      "name": "Premiership",
+      "league_id": "Scotland-Premiership-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Spain",
+      "name": "La-Liga",
+      "league_id": "Spain-La-Liga-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Spain",
+      "name": "Segunda-Division",
+      "league_id": "Spain-Segunda-Division-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Sweden",
+      "name": "Allsvenskan",
+      "league_id": "Sweden-Allsvenskan-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Switzerland",
+      "name": "Super-League",
+      "league_id": "Switzerland-Super-League-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "Turkey",
+      "name": "Super-Lig",
+      "league_id": "Turkey-Super-Lig-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
+      ]
+    },
+    {
+      "country": "USA",
+      "name": "MLS",
+      "league_id": "USA-MLS-01",
+      "models": [
+        {
+          "classifier": "LogisticRegressor",
+          "targets": "all"
+        },
+        {
+          "classifier": "LightGBM",
+          "targets": [
+            "Result",
+            "Result-U/O"
+          ],
+          "tune_trials": 15
+        }
       ]
     }
   ]
