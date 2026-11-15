@@ -17,7 +17,7 @@ from zipfile import ZipFile
 
 
 UPDATE_ARCHIVE_URL = (
-    'https://github.com/kochlisGit/ProphitBet-Soccer-Bets-Predictor/'
+    'https://github.com/Smile9799/ProphitBet-Soccer-Bets-Predictor/'
     'archive/refs/heads/main.zip'
 )
 
