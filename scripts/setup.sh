@@ -14,7 +14,8 @@
 #   bash setup.sh
 #
 # Options:
-#   --dir PATH          install folder (default: ~/ProphitBet-Soccer-Bets-Predictor, or this clone if run from one)
+#   --dir PATH          install folder (default: ~/Documents/project/ProphitBet-Soccer-Bets-Predictor,
+#                       or this clone if run from one)
 #   --venv PATH         virtual environment (default: ~/prophitbet-venv)
 #   --yes               accept all defaults without asking
 #   --restore / --no-restore     restore the latest MEGA backup (default: ask; "yes" only if no local data exists)
@@ -30,7 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/../main.py" ] && [ -d "$SCRIPT_DIR/../.git" ]; then
     INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 else
-    INSTALL_DIR="$HOME/ProphitBet-Soccer-Bets-Predictor"
+    INSTALL_DIR="$HOME/Documents/project/ProphitBet-Soccer-Bets-Predictor"
 fi
 VENV_DIR="$HOME/prophitbet-venv"
 ASSUME_YES=0
@@ -52,7 +53,7 @@ while [ $# -gt 0 ]; do
         --no-desktop) DESKTOP=0 ;;
         --skip-deps) SKIP_DEPS=1 ;;
         --skip-mega) SKIP_MEGA=1 ;;
-        -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
     shift
@@ -117,6 +118,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then
         git -C "$INSTALL_DIR" pull --ff-only -q && info "Updated to $(git -C "$INSTALL_DIR" log --oneline -1)"
     fi
 else
+    mkdir -p "$(dirname "$INSTALL_DIR")"
     git clone -q "$REPO_URL" "$INSTALL_DIR"
     info "Cloned $(git -C "$INSTALL_DIR" log --oneline -1)"
 fi

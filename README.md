@@ -582,7 +582,8 @@ To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at
 
 ## One-Shot Setup (fork, Linux Mint / Ubuntu)
 `scripts/setup.sh` sets up ProphitBet on a fresh machine (or safely re-runs on an existing one): installs git,
-Graphviz and Python 3.11 when missing, clones/updates this repository, creates `~/prophitbet-venv` with the
+Graphviz and Python 3.11 when missing, clones/updates this repository into
+`~/Documents/project/ProphitBet-Soccer-Bets-Predictor` (change with `--dir`), creates `~/prophitbet-venv` with the
 requirements, installs MEGAcmd and logs in to MEGA (asks for your e-mail and password), restores the latest MEGA
 backup, creates a ProphitBet launcher (application menu + desktop icon) and installs the Tuesday/Friday 17:30
 automation schedule.
