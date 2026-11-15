@@ -580,6 +580,24 @@ To schedule it on Linux/macOS, add a crontab entry (`crontab -e`), e.g. daily at
 `scripts/run_automation.sh` uses `$HOME/prophitbet-venv/bin/python` by default (override with `PROPHITBET_PYTHON`).
 **Do not run the automation while the GUI is open**, since both keep and save their own copy of the model index.
 
+## Backups to MEGA (fork)
+League data, trained models, tuning studies and predictions are not stored in git. `scripts/backup_to_mega.sh` archives
+`storage/leagues`, `storage/predictions` and `storage/configs` and uploads the archive to `MEGA:/ProphitBet-Backups`
+(the latest 8 are kept); `scripts/run_automation.sh` runs it after every scheduled run.
+
+One-time setup with [MEGAcmd](https://mega.io/cmd) (Ubuntu 24.04 / Linux Mint 22 package shown):
+
+```bash
+wget https://mega.nz/linux/repo/xUbuntu_24.04/amd64/megacmd-xUbuntu_24.04_amd64.deb
+sudo apt install ./megacmd-xUbuntu_24.04_amd64.deb
+mega-login you@example.com          # prompts for the password; the session is remembered
+scripts/backup_to_mega.sh           # first backup
+```
+
+Restore the latest backup (current data is first moved to `storage/pre-restore-<timestamp>/`) with
+`scripts/restore_from_mega.sh`, or a specific one with `scripts/restore_from_mega.sh prophitbet-<date>-<time>.tar.gz`.
+An rclone remote named `mega` works as an alternative to MEGAcmd.
+
 ## Help & Support
 ProphitBet-v3 introduces a redesigned *elp & Support menu, providing an 
 improved learning experience through advanced, enriched tutorials and 

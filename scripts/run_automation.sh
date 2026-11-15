@@ -7,6 +7,7 @@
 #
 # Environment:
 #   PROPHITBET_PYTHON  Python 3.11 interpreter (default: $HOME/prophitbet-venv/bin/python)
+#   PROPHITBET_BACKUP  1 (default) backs up data & models to MEGA after the run (scripts/backup_to_mega.sh)
 #
 # Example crontab entry (daily at 06:30; see README "Automation"):
 #   30 6 * * * /path/to/ProphitBet-Soccer-Bets-Predictor/scripts/run_automation.sh >/dev/null 2>&1
@@ -52,7 +53,15 @@ while gui_is_open; do
     waited=$((waited + 5))
 done
 
+status=0
 if [ -f storage/configs/automation_plan.json ]; then
-    exec "$PYTHON" cli.py run --plan --all "$@"
+    "$PYTHON" cli.py run --plan --all "$@" || status=$?
+else
+    "$PYTHON" cli.py run --all "$@" || status=$?
 fi
-exec "$PYTHON" cli.py run --all "$@"
+
+# Backing up data & models to MEGA (skipped with a log entry if MEGA is not set up; never fails the run).
+if [ "${PROPHITBET_BACKUP:-1}" = "1" ]; then
+    "$PROJECT_ROOT/scripts/backup_to_mega.sh" || true
+fi
+exit "$status"
